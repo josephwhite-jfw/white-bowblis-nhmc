@@ -179,3 +179,18 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# ---------- Data (never commit raw) ----------
+data/raw/
+data/interim/
+*.csv
+*.tsv
+*.parquet
+*.zip
+
+# ---------- Notebook noise ----------
+**/.ipynb_checkpoints
+
+# ---------- Environments ----------
+.venv/
+.conda/
