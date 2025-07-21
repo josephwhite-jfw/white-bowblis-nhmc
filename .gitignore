@@ -180,13 +180,6 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# ---------- Data (never commit raw) ----------
-data/raw/
-data/interim/
-*.csv
-*.tsv
-*.parquet
-*.zip
 
 # ---------- Notebook noise ----------
 **/.ipynb_checkpoints
@@ -197,10 +190,6 @@ data/interim/
 
 # Jupyter noise
 **/.ipynb_checkpoints
-
-# Large generated files we don't commit
-data/interim/
-outputs/
 
 # OS cruft
 .DS_Store
