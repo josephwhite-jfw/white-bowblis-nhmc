@@ -5,11 +5,13 @@
 #   * Reads RAW_DIR/medicare-cost-reports/mcr_flatfile_20??.csv (3 cols only)
 #   * CCN normalization: alphanumeric-safe (pad only if purely digits)
 #   * Removes in-hospital CCNs via provider_resides_in_hospital_by_ccn.csv
+#   * Flags MCR CHOWs **only** if CHOW date >= 2017-01-01 (OWN-aligned window)
 #   * Outputs:
-#       - data/interim/mcr_chow_events_long.csv              (dated CHOW events)
-#       - data/interim/mcr_chow_provider_events_all.csv      (per-CCN CHOW counts + dates)
-#       - data/interim/chow_agreement_tables.xlsx            (Overview, 0/1/2+ buckets, Crosstab, Discrepancies)
-#   * Compares against: data/interim/ccn_chow_lite.csv       (your ownership CHOW-lite)
+#       - data/interim/mcr_chow_events_long.csv                (all dated events, audit)
+#       - data/interim/mcr_chow_provider_events_all.csv        (per-CCN CHOW counts+dates, POST-2017 only)
+#       - data/interim/mcr_chow_provider_events_with_windows.csv (diagnostics: pre/post lists per CCN)
+#       - data/interim/chow_agreement_tables.xlsx              (Overview, buckets, Crosstab, Discrepancies)
+#   * Compares against: data/interim/ccn_chow_lite.csv         (your ownership CHOW-lite)
 # Run with: %run 05_build_mcr_chow_and_compare.py
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -35,11 +37,15 @@ HOSP_BY_CCN = PROV_DIR / "provider_resides_in_hospital_by_ccn.csv"  # CCN-level 
 INTERIM_DIR = PROJECT_ROOT / "data" / "interim"
 INTERIM_DIR.mkdir(parents=True, exist_ok=True)
 
-OUT_EVENTS_LONG = INTERIM_DIR / "mcr_chow_events_long.csv"
-OUT_PROVIDER_ALL = INTERIM_DIR / "mcr_chow_provider_events_all.csv"
-OUT_XLSX = INTERIM_DIR / "chow_agreement_tables.xlsx"
+OUT_EVENTS_LONG   = INTERIM_DIR / "mcr_chow_events_long.csv"                  # all dated events (audit)
+OUT_PROVIDER_ALL  = INTERIM_DIR / "mcr_chow_provider_events_all.csv"          # POST-2017 only (flagged)
+OUT_PROVIDER_DIAG = INTERIM_DIR / "mcr_chow_provider_events_with_windows.csv" # diagnostics: pre/post lists
+OUT_XLSX          = INTERIM_DIR / "chow_agreement_tables.xlsx"
 
 OWN_LITE = INTERIM_DIR / "ccn_chow_lite.csv"  # produced by your signatures+CHOW script
+
+# Align to OWN window
+CUTOFF_DATE = pd.Timestamp("2017-01-01")
 
 print(f"[paths] RAW_DIR={RAW_DIR}")
 print(f"[paths] MCR_DIR={MCR_DIR}")
@@ -106,13 +112,8 @@ print(f"[stack] combined rows={len(mcr_raw):,}")
 print("[stack] non-null counts:\n", mcr_raw.notna().sum())
 
 # ------------- Normalize -------------
-# Standardize column names to uppercase
 mcr = mcr_raw.rename(columns={c: c.upper().strip() for c in mcr_raw.columns})
-
-# CCN: alphanumeric-safe normalization
 mcr["PRVDR_NUM"] = normalize_ccn_any(mcr["PRVDR_NUM"])
-
-# Parse CHOW date (keep NaT if blank)
 mcr["S2_2_CHOWDATE"] = pd.to_datetime(
     mcr["S2_2_CHOWDATE"].astype("string").str.strip(),
     errors="coerce"
@@ -121,9 +122,7 @@ mcr["S2_2_CHOWDATE"] = pd.to_datetime(
 # ------------- Remove in-hospital CCNs (by CCN) -------------
 if HOSP_BY_CCN.exists():
     hosp = pd.read_csv(HOSP_BY_CCN, dtype=str, low_memory=False)
-    # normalize columns and CCN
     hosp.columns = [c.strip().lower() for c in hosp.columns]
-    # accept several possible column names
     ccn_col = next((c for c in ["cms_certification_number","ccn","provnum","prvdr_num"] if c in hosp.columns), None)
     if ccn_col is None:
         raise ValueError(f"{HOSP_BY_CCN} missing CCN column.")
@@ -147,59 +146,54 @@ if HOSP_BY_CCN.exists():
 else:
     print(f"[hospital filter] WARNING: {HOSP_BY_CCN} not found — no CCNs filtered")
 
-# ---------- Provider universe (all providers after hospital filter) ----------
+# ---------- Provider universe (after hospital filter) ----------
 all_providers = (
     mcr["PRVDR_NUM"].dropna().astype("string").drop_duplicates()
     .to_frame(name="cms_certification_number")
 )
 
-# ---------- Long events table (dated CHOWs only) ----------
-events = (
+# ---------- Long events table (all dated CHOWs; audit) ----------
+events_all = (
     mcr.loc[mcr["S2_2_CHOWDATE"].notna(), ["PRVDR_NUM", "S2_2_CHOWDATE"]]
-       .dropna()
        .drop_duplicates()
        .sort_values(["PRVDR_NUM", "S2_2_CHOWDATE"], kind="mergesort")
        .reset_index(drop=True)
+       .rename(columns={"PRVDR_NUM": "cms_certification_number"})
 )
-events = events.rename(columns={"PRVDR_NUM": "cms_certification_number"})
-if not events.empty:
-    events["chow_order"] = (
-        events.groupby("cms_certification_number")["S2_2_CHOWDATE"]
-              .rank(method="first").astype(int)
-    )
+if not events_all.empty:
+    events_all["event_month"] = pd.to_datetime(events_all["S2_2_CHOWDATE"]).dt.to_period("M").dt.to_timestamp()
 
-# Save long events
-events.to_csv(OUT_EVENTS_LONG, index=False)
-print(f"[saved] events-long -> {OUT_EVENTS_LONG}  rows={len(events):,}  providers={events['cms_certification_number'].nunique() if not events.empty else 0:,}")
+# Save all events (no cutoff) for audit
+events_all.to_csv(OUT_EVENTS_LONG, index=False)
+print(f"[saved] events-long -> {OUT_EVENTS_LONG}  rows={len(events_all):,}  providers={events_all['cms_certification_number'].nunique() if not events_all.empty else 0:,}")
 
-# ---------- Wide per-provider table ----------
-if events.empty:
+# ---------- Enforce OWN-aligned window for MCR CHOWs ----------
+# Keep events that occur on/after 2017-01-01 for counting/flagging
+events_post = events_all.loc[events_all["event_month"] >= CUTOFF_DATE].copy() if not events_all.empty else events_all
+
+# ---------- Wide per-provider table (POST-2017 only) ----------
+if events_post.empty:
     wide = pd.DataFrame(columns=["cms_certification_number"])
+    counts = pd.DataFrame(columns=["cms_certification_number","n_chow"])
 else:
+    events_post["chow_order"] = events_post.groupby("cms_certification_number")["event_month"].rank(method="first").astype(int)
     wide = (
-        events.pivot(index="cms_certification_number", columns="chow_order", values="S2_2_CHOWDATE")
-              .sort_index()
-              .reset_index()
+        events_post.pivot(index="cms_certification_number", columns="chow_order", values="event_month")
+                  .sort_index()
+                  .reset_index()
     )
-    # Rename pivoted columns chow_1_date, chow_2_date, ...
     if wide.shape[1] > 1:
         wide.columns = ["cms_certification_number"] + [f"chow_{k}_date" for k in wide.columns[1:]]
     else:
         wide.columns = ["cms_certification_number"]
-
-# Counts and flags
-if events.empty:
-    counts = pd.DataFrame(columns=["cms_certification_number","n_chow"])
-else:
-    counts = events.groupby("cms_certification_number", as_index=False).size().rename(columns={"size":"n_chow"})
+    counts = events_post.groupby("cms_certification_number", as_index=False).size().rename(columns={"size":"n_chow"})
 
 provider_wide = all_providers.merge(wide, on="cms_certification_number", how="left")
 provider_wide = provider_wide.merge(counts, on="cms_certification_number", how="left")
-
 provider_wide["n_chow"] = provider_wide["n_chow"].fillna(0).astype("Int16")
 provider_wide["is_chow"] = (provider_wide["n_chow"] > 0).astype("Int8")
 
-# Convert date columns to ISO strings for CSV readability
+# Convert date columns to ISO for CSV readability
 date_cols = [c for c in provider_wide.columns if c.startswith("chow_") and c.endswith("_date")]
 for c in date_cols:
     provider_wide[c] = pd.to_datetime(provider_wide[c], errors="coerce").dt.strftime("%Y-%m-%d")
@@ -208,12 +202,37 @@ for c in date_cols:
 ordered = ["cms_certification_number", "n_chow", "is_chow"] + sorted(date_cols, key=lambda x: int(re.search(r"chow_(\d+)_date", x).group(1)) if re.search(r"chow_(\d+)_date", x) else 0)
 provider_wide = provider_wide[ordered].sort_values("cms_certification_number").reset_index(drop=True)
 
-print(f"[result] providers total={len(provider_wide):,}  with CHOWs={int((provider_wide['n_chow']>0).sum()):,}  max_n_chow={int(provider_wide['n_chow'].max() if not provider_wide.empty else 0)}")
+print(f"[result] providers total={len(provider_wide):,}  with POST-2017 CHOWs={int((provider_wide['n_chow']>0).sum()):,}  max_n_chow={int(provider_wide['n_chow'].max() if not provider_wide.empty else 0)}")
 print(provider_wide.head(10))
 
-# ---------- Save provider-wide (all providers) ----------
+# ---------- Save provider-wide (POST-2017 aligned) ----------
 provider_wide.to_csv(OUT_PROVIDER_ALL, index=False)
-print(f"[saved] provider-wide (ALL providers) -> {OUT_PROVIDER_ALL}")
+print(f"[saved] provider-wide (POST-2017 ONLY) -> {OUT_PROVIDER_ALL}")
+
+# ---------- Optional diagnostics: pre/post collapsed lists per CCN ----------
+def collapse_months(df):
+    if df is None or df.empty:
+        return pd.Series(dtype="string")
+    return (df.groupby("cms_certification_number")["event_month"]
+              .apply(lambda s: "|".join(pd.to_datetime(sorted(set(s))).strftime("%Y-%m").tolist()))
+              .astype("string"))
+
+pre  = events_all.loc[events_all["event_month"] <  CUTOFF_DATE].copy() if not events_all.empty else events_all
+post = events_post
+
+diag = all_providers.copy()
+diag["pre_dates"]  = collapse_months(pre)
+diag["post_dates"] = collapse_months(post)
+diag["n_pre"]  = diag["pre_dates"].fillna("").str.count(r"\|").add((diag["pre_dates"].fillna("")!="").astype(int))
+diag["n_post"] = diag["post_dates"].fillna("").str.count(r"\|").add((diag["post_dates"].fillna("")!="").astype(int))
+diag["n_pre"]  = diag["n_pre"].fillna(0).astype("Int16")
+diag["n_post"] = diag["n_post"].fillna(0).astype("Int16")
+
+diag_out = all_providers.merge(provider_wide[["cms_certification_number","n_chow"]], on="cms_certification_number", how="left") \
+                        .merge(diag, on="cms_certification_number", how="left") \
+                        .rename(columns={"n_chow":"n_chow_post"})
+diag_out.to_csv(OUT_PROVIDER_DIAG, index=False)
+print(f"[saved] provider-wide with windows (diagnostics) -> {OUT_PROVIDER_DIAG}")
 
 # ---------- Agreement vs. Ownership CHOW-lite ----------
 if not OWN_LITE.exists():
@@ -222,28 +241,23 @@ else:
     own = pd.read_csv(OWN_LITE, dtype={"cms_certification_number":"string"})
     mcrw = provider_wide.copy()
 
-    # Sanity: required columns
     if "num_chows" not in own.columns:
         raise KeyError("Ownership CHOW-lite missing 'num_chows'.")
     if "n_chow" not in mcrw.columns:
         raise KeyError("MCR wide missing 'n_chow' (internal bug).")
 
-    # Harmonize minimal frames
     lite_comp = own[["cms_certification_number", "num_chows"]].rename(columns={"num_chows": "num_chows_lite"})
     mcr_comp  = mcrw[["cms_certification_number", "n_chow"]].rename(columns={"n_chow": "num_chows_mcr"})
 
-    # Merge all CCNs
     merged = lite_comp.merge(mcr_comp, on="cms_certification_number", how="outer")
 
-    # Create binary CHOW flags
     merged["is_chow_lite"] = merged["num_chows_lite"].fillna(0) > 0
     merged["is_chow_mcr"]  = merged["num_chows_mcr"].fillna(0) > 0
 
-    # 2x2 crosstab
     crosstab = pd.crosstab(merged["is_chow_lite"], merged["is_chow_mcr"],
                            rownames=["Lite (ours)"], colnames=["MCR"])
 
-    # 0/1/2+ categories
+    # 0/1/2+ categories for buckets
     def to_cat(n):
         try:
             n = int(n)
@@ -256,16 +270,13 @@ else:
     merged["own_cat"] = merged["num_chows_lite"].map(to_cat)
     merged["mcr_cat"] = merged["num_chows_mcr"].map(to_cat)
 
-    # Restrict to overlap for bucket tables
     overlap = merged.dropna(subset=["num_chows_lite","num_chows_mcr"], how="any").copy()
 
-    # Crosstab (0/1/2+)
     ctab = pd.crosstab(overlap["own_cat"], overlap["mcr_cat"]).reindex(
         index=["0","1","2+"], columns=["0","1","2+"], fill_value=0
     ).reset_index().rename(columns={"own_cat":"Ownership n_chow"})
     ctab["Total"] = ctab[["0","1","2+"]].sum(axis=1)
 
-    # OWN-based buckets
     own_match_00 = ((overlap["own_cat"]=="0")  & (overlap["mcr_cat"]=="0")).sum()
     own_match_11 = ((overlap["own_cat"]=="1")  & (overlap["mcr_cat"]=="1")).sum()
     own_match_2p = ((overlap["own_cat"]=="2+") & (overlap["mcr_cat"]=="2+")).sum()
@@ -283,7 +294,6 @@ else:
     })
     own_bucket["Share_of_Overlap_%"] = (own_bucket["Count"] / max(1, own_total) * 100).round(2)
 
-    # MCR-based buckets (same overlap; just perspective)
     mcr_match_00 = ((overlap["mcr_cat"]=="0")  & (overlap["own_cat"]=="0")).sum()
     mcr_match_11 = ((overlap["mcr_cat"]=="1")  & (overlap["own_cat"]=="1")).sum()
     mcr_match_2p = ((overlap["mcr_cat"]=="2+") & (overlap["own_cat"]=="2+")).sum()
@@ -301,12 +311,10 @@ else:
     })
     mcr_bucket["Share_of_Overlap_%"] = (mcr_bucket["Count"] / max(1, mcr_total) * 100).round(2)
 
-    # Discrepancies table (overlap only)
     discrepancies = overlap.loc[overlap["own_cat"] != overlap["mcr_cat"], [
         "cms_certification_number","num_chows_lite","num_chows_mcr","own_cat","mcr_cat"
     ]].sort_values("cms_certification_number").reset_index(drop=True)
 
-    # Overview
     overview = pd.DataFrame({
         "Metric": [
             "MCR providers (after hospital filter)",
@@ -316,7 +324,6 @@ else:
         "Count": [len(mcrw), len(own), len(overlap)]
     })
 
-    # Console preview
     print("\n=== Crosstab of CHOW presence (binary, all CCNs) ===")
     print(crosstab)
     print("\n=== OWN-based buckets (overlap base) ===")
@@ -337,20 +344,18 @@ else:
         return widths
 
     try:
-        import xlsxwriter  # if present we'll use it
+        import xlsxwriter
         engine = "xlsxwriter"
     except Exception:
         engine = "openpyxl"
 
     with pd.ExcelWriter(OUT_XLSX, engine=engine) as xw:
-        # Sheets
         overview.to_excel(xw, sheet_name="Overview", index=False)
         own_bucket.to_excel(xw, sheet_name="Buckets_OWN_base", index=False)
         mcr_bucket.to_excel(xw, sheet_name="Buckets_MCR_base", index=False)
         ctab.to_excel(xw, sheet_name="Crosstab_0-1-2plus", index=False)
         discrepancies.to_excel(xw, sheet_name="Discrepancies", index=False)
 
-        # Autofit-ish
         if engine == "xlsxwriter":
             for name, df in {
                 "Overview": overview,
