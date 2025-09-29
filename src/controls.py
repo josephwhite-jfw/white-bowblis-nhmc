@@ -1,160 +1,164 @@
-#!/usr/bin/env python
-# coding: utf-8
-# ─────────────────────────────────────────────────────────────────────────────
-# Monthly payer mix (% Medicare / % Medicaid) + ownership type from MCR
-# Uses explicit columns (validated on your files):
-#   CCN: PRVDR_NUM
-#   Period: FY_BGN_DT, FY_END_DT
-#   Ownership: MRC_OWNERSHIP (1=For-profit, 2=Nonprofit, 3=Government)
-#   Patient days: S3_1_PATDAYS_TOTAL / _MEDICARE / _MEDICAID
-#
-# Output: data/interim/pbj_controls_from_mcr_monthly.csv
-# ─────────────────────────────────────────────────────────────────────────────
-
 from pathlib import Path
-import os, warnings, re
 import pandas as pd
 import numpy as np
-warnings.filterwarnings("ignore", category=FutureWarning)
 
-# ---------------- Paths ----------------
-PROJECT_ROOT = Path.cwd()
-while not (PROJECT_ROOT / "src").is_dir() and PROJECT_ROOT != PROJECT_ROOT.parent:
-    PROJECT_ROOT = PROJECT_ROOT.parent
-
-RAW_DIR = Path(os.getenv("NH_DATA_DIR", PROJECT_ROOT / "data" / "raw")).resolve()
+# --- Paths & files ---
+RAW_DIR = Path(r"C:\Users\Owner\OneDrive\NursingHomeData")
 MCR_DIR = RAW_DIR / "medicare-cost-reports"
-GLOB = "mcr_flatfile_20??.csv"
-
-INTERIM_DIR = PROJECT_ROOT / "data" / "interim"
-INTERIM_DIR.mkdir(parents=True, exist_ok=True)
-
-OUT_FP = INTERIM_DIR / "pbj_controls_from_mcr_monthly.csv"
+FILES = sorted(MCR_DIR.glob("mcr_flatfile_20??.csv"))
 
 print(f"[paths] RAW_DIR={RAW_DIR}")
 print(f"[paths] MCR_DIR={MCR_DIR}")
-print(f"[out]   {OUT_FP}")
+print(f"[scan] {len(FILES)} files:", [f.name for f in FILES])
 
-# ---------------- Helpers ----------------
-def normalize_ccn_any(series: pd.Series) -> pd.Series:
-    """Alphanumeric-safe CCN normalization: strip separators, pad only if all digits."""
-    s = series.astype("string").fillna("").str.strip().str.upper()
+# --- Helpers ---
+def normalize_ccn_any(s: pd.Series) -> pd.Series:
+    s = s.astype("string").fillna("").str.strip().str.upper()
     s = s.str.replace(r"[ \-\/\.]", "", regex=True)
     is_digits = s.str.fullmatch(r"\d+")
-    s = s.mask(is_digits, s.str.zfill(6))
-    s = s.replace({"": pd.NA})
-    return s
+    return s.mask(is_digits, s.str.zfill(6)).replace({"": pd.NA})
 
-OWN_MAP = {
-    1: "For-profit",  # Proprietary
-    2: "Nonprofit",
-    3: "Government",
-}
+def month_range_df(start, end):
+    """Closed-open monthly range [start, end] -> rows of month_start."""
+    if pd.isna(start) or pd.isna(end):
+        return pd.DataFrame({"month_start":[]})
+    s = pd.Period(start, "M").to_timestamp()
+    e = pd.Period(end,   "M").to_timestamp()
+    # Ensure end >= start; guard for bad rows
+    if e < s: 
+        s, e = e, s
+    months = pd.period_range(s, e, freq="M").to_timestamp()
+    return pd.DataFrame({"month_start": months})
 
-def map_ownership(val):
-    if pd.isna(val): return pd.NA
-    try:
-        i = int(float(str(val)))
-        return OWN_MAP.get(i, pd.NA)
-    except Exception:
-        s = str(val).strip().upper()
-        if any(k in s for k in ["PROPRIETARY", "FOR PROFIT", "FOR-PROFIT", "PROFIT", "FP"]):
-            return "For-profit"
-        if any(k in s for k in ["NONPROFIT", "NOT-FOR-PROFIT", "NOT FOR PROFIT", "NON-PROFIT", "NFP"]):
-            return "Nonprofit"
-        if any(k in s for k in ["GOV", "GOVERNMENT", "PUBLIC", "STATE", "COUNTY", "CITY", "FEDERAL"]):
-            return "Government"
-        return pd.NA
-
-def month_span(start_ts, end_ts):
-    if pd.isna(start_ts) or pd.isna(end_ts):
-        return []
-    s = pd.Period(start_ts, "M").to_timestamp("s")
-    e = pd.Period(end_ts,   "M").to_timestamp("s")
-    return pd.period_range(s, e, freq="M").to_timestamp("s").tolist()
-
-# ---------------- Main ----------------
-files = sorted(MCR_DIR.glob(GLOB))
-if not files:
-    raise FileNotFoundError(f"No files matched {MCR_DIR / GLOB}")
-
-rows = []
-for fp in files:
+# --- Load, keep only needed columns, and stack ---
+use_cols = [
+    "PRVDR_NUM",        # CCN
+    "FY_BGN_DT",        # fiscal begin date
+    "FY_END_DT",        # fiscal end date
+    "MRC_OWNERSHIP",    # ownership (numeric-coded)
+    "S3_1_PATDAYS_TOTAL",
+    "S3_1_PATDAYS_MEDICARE",
+    "S3_1_PATDAYS_MEDICAID",
+]
+frames = []
+for fp in FILES:
     df = pd.read_csv(fp, low_memory=False)
     df.columns = [c.upper().strip() for c in df.columns]
-    print(f"[read] {fp.name} rows={len(df):,} cols={df.shape[1]}")
-
-    # Required columns (explicit)
-    req = ["PRVDR_NUM", "FY_BGN_DT", "FY_END_DT", "MRC_OWNERSHIP",
-           "S3_1_PATDAYS_TOTAL", "S3_1_PATDAYS_MEDICARE", "S3_1_PATDAYS_MEDICAID"]
-    missing = [c for c in req if c not in df.columns]
+    keep = [c for c in use_cols if c in df.columns]
+    missing = [c for c in use_cols if c not in df.columns]
     if missing:
-        print(f"[warn] {fp.name}: missing expected columns {missing} — attempting to continue where possible.")
+        print(f"[warn] {fp.name} missing: {missing}")
+    sub = df[keep].copy()
+    sub["file_year"] = int(fp.stem[-4:])
+    frames.append(sub)
 
-    # CCN
-    if "PRVDR_NUM" not in df.columns:
-        print(f"[warn] {fp.name}: no PRVDR_NUM; skipping file.")
+raw = pd.concat(frames, ignore_index=True)
+print(f"[read] combined rows={len(raw):,}, cols={raw.shape[1]}")
+
+# --- Basic cleaning ---
+raw["cms_certification_number"] = normalize_ccn_any(raw["PRVDR_NUM"])
+raw["FY_BGN_DT"] = pd.to_datetime(raw["FY_BGN_DT"], errors="coerce")
+raw["FY_END_DT"] = pd.to_datetime(raw["FY_END_DT"], errors="coerce")
+
+# Patient-day based pay mix (preferred)
+for c in ["S3_1_PATDAYS_TOTAL","S3_1_PATDAYS_MEDICARE","S3_1_PATDAYS_MEDICAID"]:
+    if c in raw.columns:
+        raw[c] = pd.to_numeric(raw[c], errors="coerce")
+    else:
+        raw[c] = np.nan
+
+# --- Build a codebook of ownership codes found ---
+codebook = (
+    raw["MRC_OWNERSHIP"]
+    .dropna()
+    .astype(str)
+    .str.strip()
+    .str.replace(".0$", "", regex=True)   # tidy "4.0" -> "4"
+    .value_counts()
+    .rename_axis("MRC_OWNERSHIP_code")
+    .reset_index(name="count")
+)
+print("\n=== Ownership codebook (from MRC_OWNERSHIP) ===")
+print(codebook.to_string(index=False))
+
+# --- Define your mapping to 3 buckets ---
+# Fill this dict once you decide the mapping.
+# Keep it conservative first, then iterate based on the codebook printout.
+OWN_MAP = {
+    # EXAMPLES (adjust/expand these as you confirm meanings):
+    # "1": "Nonprofit",
+    # "2": "Nonprofit",
+    # "3": "Government",
+    # "4": "For-profit",
+    # "5": "For-profit",
+    # "6": "For-profit",
+    # "7": "For-profit",
+    # "8": "Government",
+    # "9": "For-profit",
+    # "10": "Government",
+    # "11": "Government",
+    # "12": "Government",
+    # "13": "Government",
+    # "0": None,  # unknown/missing
+}
+
+# Standardize codes to strings w/o trailing .0
+raw["_own_code"] = (
+    raw["MRC_OWNERSHIP"].astype(str).str.strip().str.replace(".0$", "", regex=True)
+)
+
+raw["ownership_type"] = raw["_own_code"].map(OWN_MAP)
+
+# Report unmapped so you can finish the dictionary above
+unmapped = (
+    raw.loc[raw["ownership_type"].isna(), "_own_code"]
+       .dropna().value_counts()
+       .rename_axis("code").reset_index(name="rows")
+)
+print("\n=== Unmapped ownership codes (fill OWN_MAP for these) ===")
+print(unmapped.head(30).to_string(index=False) if not unmapped.empty else "None 🎉")
+
+# --- Expand each cost-report year to monthly rows and attach controls ---
+rows = []
+for _, r in raw.dropna(subset=["cms_certification_number","FY_BGN_DT","FY_END_DT"]).iterrows():
+    months = month_range_df(r["FY_BGN_DT"], r["FY_END_DT"])
+    if months.empty:
         continue
-    df["cms_certification_number"] = normalize_ccn_any(df["PRVDR_NUM"])
+    tot = r.get("S3_1_PATDAYS_TOTAL", np.nan)
+    medcr = r.get("S3_1_PATDAYS_MEDICARE", np.nan)
+    medcd = r.get("S3_1_PATDAYS_MEDICAID", np.nan)
+    # compute shares (stay on the row; monthly expansion just repeats annual share)
+    if pd.notna(tot) and tot > 0:
+        pct_medicare = 100.0 * (medcr or 0) / tot
+        pct_medicaid = 100.0 * (medcd or 0) / tot
+    else:
+        pct_medicare = np.nan
+        pct_medicaid = np.nan
 
-    # Period
-    beg = pd.to_datetime(df.get("FY_BGN_DT"), errors="coerce")
-    end = pd.to_datetime(df.get("FY_END_DT"), errors="coerce")
+    block = months.copy()
+    block["cms_certification_number"] = r["cms_certification_number"]
+    block["ownership_type"] = r["ownership_type"]
+    block["pct_medicare"] = pct_medicare
+    block["pct_medicaid"] = pct_medicaid
+    rows.append(block)
 
-    # Ownership
-    own = df.get("MRC_OWNERSHIP")
-    ownership_type = own.map(map_ownership) if own is not None else pd.Series(pd.NA, index=df.index)
+monthly = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(
+    columns=["cms_certification_number","month_start","ownership_type","pct_medicare","pct_medicaid"]
+)
 
-    # Patient days → payer mix
-    tot = pd.to_numeric(df.get("S3_1_PATDAYS_TOTAL"), errors="coerce")
-    mdcr = pd.to_numeric(df.get("S3_1_PATDAYS_MEDICARE"), errors="coerce") if "S3_1_PATDAYS_MEDICARE" in df.columns else np.nan
-    mdcd = pd.to_numeric(df.get("S3_1_PATDAYS_MEDICAID"), errors="coerce") if "S3_1_PATDAYS_MEDICAID" in df.columns else np.nan
+# De-duplicate if overlapping reports yield duplicate months; prefer non-null ownership
+monthly = monthly.sort_values(["cms_certification_number","month_start"])
+monthly = (monthly
+           .groupby(["cms_certification_number","month_start"], as_index=False)
+           .agg({
+               "ownership_type": lambda s: s.dropna().iloc[0] if s.dropna().size else pd.NA,
+               "pct_medicare": "mean",
+               "pct_medicaid": "mean",
+           }))
 
-    # Avoid division by zero; compute percents
-    tot_nonzero = tot.replace(0, np.nan)
-    pct_medicare = (mdcr / tot_nonzero * 100).round(2)
-    pct_medicaid = (mdcd / tot_nonzero * 100).round(2)
+print(f"\n[result] monthly rows={len(monthly):,}  CCNs={monthly['cms_certification_number'].nunique():,}")
+print("\n=== ownership_type distribution (after mapping) ===")
+print(monthly["ownership_type"].value_counts(dropna=False).head(10))
 
-    # Assemble per-row summary
-    keep = pd.DataFrame({
-        "cms_certification_number": df["cms_certification_number"],
-        "period_begin": beg,
-        "period_end": end,
-        "ownership_type": ownership_type,
-        "pct_medicare": pct_medicare,
-        "pct_medicaid": pct_medicaid,
-        "src_file": fp.name
-    }).dropna(subset=["cms_certification_number", "period_begin", "period_end"])
-
-    # Expand to monthly
-    for _, r in keep.iterrows():
-        months = month_span(r["period_begin"], r["period_end"])
-        for m in months:
-            rows.append({
-                "cms_certification_number": r["cms_certification_number"],
-                "year_month": pd.Period(m, "M").strftime("%Y-%m"),
-                "month": pd.Period(m, "M").to_timestamp("s"),
-                "pct_medicare": r["pct_medicare"],
-                "pct_medicaid": r["pct_medicaid"],
-                "ownership_type": r["ownership_type"],
-                "src_file": r["src_file"]
-            })
-
-# Finalize
-out = pd.DataFrame(rows)
-if out.empty:
-    print("[result] No rows created. Check that the expected columns exist in the flatfiles.")
-else:
-    out = (out.sort_values(["cms_certification_number","year_month","src_file"])
-             .drop_duplicates(["cms_certification_number","year_month"], keep="last")
-             .reset_index(drop=True))
-    print(f"[result] monthly control rows={len(out):,}  CCNs={out['cms_certification_number'].nunique():,}")
-
-    print("\n=== ownership_type distribution ===")
-    print(out["ownership_type"].value_counts(dropna=False))
-
-    ok_basis = out[["pct_medicare","pct_medicaid"]].notna().any(axis=1).mean()
-    print(f"\n% rows with at least one payer % populated: {ok_basis:.1%}")
-
-    out.to_csv(OUT_FP, index=False)
-    print(f"[saved] {OUT_FP}")
+print("\n% rows with at least one payer% populated:",
+      round(100 * ((monthly["pct_medicare"].notna()) | (monthly["pct_medicaid"].notna())).mean(), 1), "%")
