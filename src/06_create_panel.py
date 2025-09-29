@@ -1,17 +1,20 @@
 #!/usr/bin/env python
 # coding: utf-8
 # ─────────────────────────────────────────────────────────────────────────────
-# Final PBJ Panel with CHOW Dummies (fixed)
+# Final PBJ Panel with CHOW Dummies (±6m tolerance)
 #   * Inputs (data/interim):
 #       - ccn_chow_lite.csv                     (ownership CHOW-lite)
-#       - mcr_chow_provider_events_all.csv      (MCR CHOW wide)
+#       - mcr_chow_provider_events_all.csv      (MCR CHOW wide; 2017+ aligned upstream)
 #       - pbj_monthly_panel.csv                 (PBJ provider-month panel)
 #   * Optional input (raw/provider-info-files):
 #       - provider_resides_in_hospital_by_ccn.csv (CCN-level in-hospital flag)
 #   * CCN normalization: alphanumeric-safe (pad only if purely digits)
 #   * Hospital filter: apply to PBJ & MCR; skip LITE (already filtered upstream)
-#   * Agreement rule: keep units that are either match_0 OR (exactly one CHOW in
-#     each source with months within ±1 month); anchor change_month to LITE month.
+#   * Agreement rule (CONSENSUS):
+#       Keep units that are either:
+#         (a) match_0 → neither source has a CHOW, OR
+#         (b) exactly one CHOW in each source with first-event months within ±6 months.
+#       Anchor change_month to the LITE month when within tolerance.
 #   * Output: data/clean/pbj_panel_with_chow_dummies.csv
 # Run with: %run 06_build_final_pbj_panel.py
 # ─────────────────────────────────────────────────────────────────────────────
@@ -89,10 +92,12 @@ def bool_from_any(x: pd.Series) -> pd.Series:
     return s.map({"1":True,"y":True,"yes":True,"true":True,"t":True,
                   "0":False,"n":False,"no":False,"false":False,"f":False}).astype("boolean")
 
-def same_month_or_within_one(a, b) -> bool:
-    if pd.isna(a) or pd.isna(b): return False
+def within_k_months(a, b, k: int) -> bool:
+    """Return True if months a and b are within ±k months (month granularity)."""
+    if pd.isna(a) or pd.isna(b): 
+        return False
     pa, pb = pd.Period(a, "M"), pd.Period(b, "M")
-    return abs((pa - pb).n) <= 1
+    return abs((pa - pb).n) <= int(k)
 
 def find_col(cols, candidates):
     lower = {c.lower(): c for c in cols}
@@ -174,17 +179,19 @@ merged = (lite_counts
 merged["is_chow_lite"] = merged["num_chows"] > 0
 merged["is_chow_mcr"]  = merged["n_chow"]    > 0
 
+TOL_MONTHS = 6  # <<< CONSENSUS TOLERANCE
+
 def agreement_picker(r):
     label = "mismatch"
     change_month = pd.NaT
     # match_0: neither source has a CHOW
     if (r["num_chows"]==0) and (r["n_chow"]==0):
         label = "match_0"
-    # match_1_same_month (±1 month tolerance): exactly one CHOW in each
+    # match_1_within_6m: exactly one CHOW in each and months within ±6
     elif (r["num_chows"]==1) and (r["n_chow"]==1):
         a, b = r["first_event_month_lite"], r["first_event_month_mcr"]
-        if same_month_or_within_one(a, b):
-            label = "match_1_same_month"
+        if within_k_months(a, b, TOL_MONTHS):
+            label = "match_1_within_6m"
             # Anchor to LITE month if present, else MCR
             change_month = pd.Period(a, "M").to_timestamp("s") if pd.notna(a) else (
                            pd.Period(b, "M").to_timestamp("s") if pd.notna(b) else pd.NaT)
@@ -196,10 +203,10 @@ def agreement_picker(r):
 
 ag = merged.apply(agreement_picker, axis=1)
 merged = pd.concat([merged, ag], axis=1)
-agree = merged.loc[merged["agreement"].isin(["match_0","match_1_same_month"])].copy()
+agree = merged.loc[merged["agreement"].isin(["match_0","match_1_within_6m"])].copy()
 
 print(f"[agree] match_0={int((agree['agreement']=='match_0').sum()):,} | "
-      f"match_1_same_month={int((agree['agreement']=='match_1_same_month').sum()):,} | "
+      f"match_1_within_6m={int((agree['agreement']=='match_1_within_6m').sum()):,} | "
       f"total_agree={len(agree):,}")
 
 # ============================== Prepare PBJ panel =============================
@@ -218,16 +225,16 @@ else:
 pbj["cms_certification_number"] = normalize_ccn_any(pbj["cms_certification_number"])
 
 # ============================== Merge & dummies ===============================
-# Keep only CCNs in the agreed universe (match_0 + match_1_same_month)
+# Keep only CCNs in the agreed universe (match_0 + match_1_within_6m)
 panel = pbj.merge(
     agree[["cms_certification_number","agreement","change_month"]],
     on="cms_certification_number",
     how="inner"
 )
 
-# treat_post: 1 starting IN the change month and onward for match_1_same_month
+# treat_post: 1 starting IN the change month and onward for match_1_within_6m
 panel["treat_post"] = 0
-is_match1 = panel["agreement"].eq("match_1_same_month") & panel["change_month"].notna()
+is_match1 = panel["agreement"].eq("match_1_within_6m") & panel["change_month"].notna()
 panel.loc[is_match1, "treat_post"] = (panel.loc[is_match1, "month"] >= panel.loc[is_match1, "change_month"]).astype(int)
 
 # event_time: months relative to change month (NaN for match_0)

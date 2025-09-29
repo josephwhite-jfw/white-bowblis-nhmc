@@ -11,6 +11,9 @@
 #       - data/interim/mcr_chow_provider_events_all.csv        (per-CCN CHOW counts+dates, POST-2017 only)
 #       - data/interim/mcr_chow_provider_events_with_windows.csv (diagnostics: pre/post lists per CCN)
 #       - data/interim/chow_agreement_tables.xlsx              (Overview, buckets, Crosstab, Discrepancies)
+#       - data/interim/chow_facility_comparison_plus.csv       (rich per-CCN comparison)
+#       - data/interim/chow_facility_comparison_1v1.csv        (subset: exactly 1 vs 1)
+#       - data/interim/chow_facility_mismatches.csv            (subset: disagreements)
 #   * Compares against: data/interim/ccn_chow_lite.csv         (your ownership CHOW-lite)
 # Run with: %run 05_build_mcr_chow_and_compare.py
 # ─────────────────────────────────────────────────────────────────────────────
@@ -41,6 +44,11 @@ OUT_EVENTS_LONG   = INTERIM_DIR / "mcr_chow_events_long.csv"                  # 
 OUT_PROVIDER_ALL  = INTERIM_DIR / "mcr_chow_provider_events_all.csv"          # POST-2017 only (flagged)
 OUT_PROVIDER_DIAG = INTERIM_DIR / "mcr_chow_provider_events_with_windows.csv" # diagnostics: pre/post lists
 OUT_XLSX          = INTERIM_DIR / "chow_agreement_tables.xlsx"
+
+# Rich comparison outputs
+PLUS_FP    = INTERIM_DIR / "chow_facility_comparison_plus.csv"
+ONEVONE_FP = INTERIM_DIR / "chow_facility_comparison_1v1.csv"
+MIS_FP     = INTERIM_DIR / "chow_facility_mismatches.csv"
 
 OWN_LITE = INTERIM_DIR / "ccn_chow_lite.csv"  # produced by your signatures+CHOW script
 
@@ -199,7 +207,10 @@ for c in date_cols:
     provider_wide[c] = pd.to_datetime(provider_wide[c], errors="coerce").dt.strftime("%Y-%m-%d")
 
 # Order columns nicely
-ordered = ["cms_certification_number", "n_chow", "is_chow"] + sorted(date_cols, key=lambda x: int(re.search(r"chow_(\d+)_date", x).group(1)) if re.search(r"chow_(\d+)_date", x) else 0)
+ordered = ["cms_certification_number", "n_chow", "is_chow"] + sorted(
+    date_cols,
+    key=lambda x: int(re.search(r"chow_(\d+)_date", x).group(1)) if re.search(r"chow_(\d+)_date", x) else 0
+)
 provider_wide = provider_wide[ordered].sort_values("cms_certification_number").reset_index(drop=True)
 
 print(f"[result] providers total={len(provider_wide):,}  with POST-2017 CHOWs={int((provider_wide['n_chow']>0).sum()):,}  max_n_chow={int(provider_wide['n_chow'].max() if not provider_wide.empty else 0)}")
@@ -382,5 +393,152 @@ else:
                     ws.column_dimensions[get_column_letter(i)].width = w
 
     print(f"\n[saved] Excel -> {OUT_XLSX}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Rich comparison datasets (PLUS, 1v1, mismatches)
+    # ─────────────────────────────────────────────────────────────────────────
+    def collapse_dates_from_cols(df, date_cols, fmt="%Y-%m-%d", month_only=True):
+        if not date_cols:
+            return pd.Series([""] * len(df), index=df.index, dtype="string")
+        dt = df[date_cols].apply(pd.to_datetime, errors="coerce")
+        if month_only:
+            dt = dt.apply(lambda col: col.dt.to_period("M").dt.to_timestamp())
+            out = dt.apply(
+                lambda r: "|".join(sorted({d.strftime("%Y-%m") for d in r if pd.notna(d)})),
+                axis=1
+            )
+        else:
+            out = dt.apply(
+                lambda r: "|".join(sorted({d.strftime(fmt) for d in r if pd.notna(d)})),
+                axis=1
+            )
+        return out.astype("string")
+
+    def first_date_str(s):
+        if not isinstance(s, str) or not s:
+            return ""
+        return s.split("|")[0]
+
+    def last_date_str(s):
+        if not isinstance(s, str) or not s:
+            return ""
+        return s.split("|")[-1]
+
+    def month_diff(a, b):
+        if not a or not b:
+            return np.nan
+        A = pd.Period(a, freq="M")
+        B = pd.Period(b, freq="M")
+        return (A - B).n
+
+    def count_exact_overlap(a, b):
+        A = set(a.split("|")) if isinstance(a, str) and a else set()
+        B = set(b.split("|")) if isinstance(b, str) and b else set()
+        return len(A & B)
+
+    def count_within_one_month(a, b):
+        A = [x for x in (a.split("|") if isinstance(a, str) and a else [])]
+        B = [y for y in (b.split("|") if isinstance(b, str) and b else [])]
+        if not A or not B:
+            return 0
+        cnt = 0
+        for x in A:
+            for y in B:
+                try:
+                    if abs(month_diff(x, y)) <= 1:
+                        cnt += 1
+                        break
+                except Exception:
+                    pass
+        return cnt
+
+    def jaccard_months(a, b):
+        A = set(a.split("|")) if isinstance(a, str) and a else set()
+        B = set(b.split("|")) if isinstance(b, str) and b else set()
+        if not A and not B:
+            return np.nan
+        return len(A & B) / max(1, len(A | B))
+
+    def set_minus(a, b):
+        A = set(a.split("|")) if isinstance(a, str) and a else set()
+        B = set(b.split("|")) if isinstance(b, str) and b else set()
+        return "|".join(sorted(A - B))
+
+    # Prepare compact frames
+    lite = own.copy()
+    mcrw = provider_wide.copy()
+
+    lite_date_cols = [c for c in lite.columns if re.fullmatch(r"chow_date_\d+", c)]
+    mcr_date_cols  = [c for c in mcrw.columns  if re.fullmatch(r"chow_\d+_date", c)]
+
+    lite_dates = collapse_dates_from_cols(lite, lite_date_cols, month_only=True)
+    mcr_dates  = collapse_dates_from_cols(mcrw, mcr_date_cols,  month_only=True)
+
+    lite_comp = pd.DataFrame({
+        "cms_certification_number": lite["cms_certification_number"].astype("string"),
+        "num_chows_lite": pd.to_numeric(lite.get("num_chows", 0), errors="coerce").fillna(0).astype(int),
+        "lite_dates": lite_dates
+    })
+
+    mcr_comp = pd.DataFrame({
+        "cms_certification_number": mcrw["cms_certification_number"].astype("string"),
+        "num_chows_mcr": pd.to_numeric(mcrw.get("n_chow", 0), errors="coerce").fillna(0).astype(int),
+        "mcr_dates": mcr_dates
+    })
+
+    comp = (lite_comp
+            .merge(mcr_comp, on="cms_certification_number", how="outer")
+            .fillna({"num_chows_lite":0, "num_chows_mcr":0, "lite_dates":"", "mcr_dates":""}))
+
+    comp["first_lite_date"] = comp["lite_dates"].apply(first_date_str)
+    comp["first_mcr_date"]  = comp["mcr_dates"].apply(first_date_str)
+    comp["last_lite_date"]  = comp["lite_dates"].apply(last_date_str)
+    comp["last_mcr_date"]   = comp["mcr_dates"].apply(last_date_str)
+    comp["delta_first_months"] = comp.apply(lambda r: month_diff(r["first_lite_date"], r["first_mcr_date"]), axis=1)
+
+    comp["n_common_exact"]      = comp.apply(lambda r: count_exact_overlap(r["lite_dates"], r["mcr_dates"]), axis=1)
+    comp["n_common_within_1m"]  = comp.apply(lambda r: count_within_one_month(r["lite_dates"], r["mcr_dates"]), axis=1)
+    comp["jaccard_months"]      = comp.apply(lambda r: jaccard_months(r["lite_dates"], r["mcr_dates"]), axis=1)
+    comp["only_in_lite_dates"]  = comp.apply(lambda r: set_minus(r["lite_dates"], r["mcr_dates"]), axis=1)
+    comp["only_in_mcr_dates"]   = comp.apply(lambda r: set_minus(r["mcr_dates"],  r["lite_dates"]), axis=1)
+
+    def classify_match(r):
+        nl, nm = int(r["num_chows_lite"]), int(r["num_chows_mcr"])
+        if nl == 0 and nm == 0:
+            return "both_zero"
+        if nl > 0 and nm == 0:
+            return "only_lite"
+        if nl == 0 and nm > 0:
+            return "only_mcr"
+        return "both_yes_same_months" if r["n_common_exact"] > 0 else "both_yes_different_months"
+
+    comp["match_type"] = comp.apply(classify_match, axis=1)
+    comp["discrepancy_flag"] = comp["match_type"].isin(["only_lite","only_mcr","both_yes_different_months"]).astype(int)
+
+    cols = [
+        "cms_certification_number",
+        "num_chows_lite","num_chows_mcr",
+        "lite_dates","mcr_dates",
+        "first_lite_date","first_mcr_date","last_lite_date","last_mcr_date",
+        "n_common_exact","n_common_within_1m","jaccard_months",
+        "delta_first_months",
+        "only_in_lite_dates","only_in_mcr_dates",
+        "match_type","discrepancy_flag"
+    ]
+    comp = comp[cols].sort_values("cms_certification_number").reset_index(drop=True)
+
+    # Save (complete)
+    comp.to_csv(PLUS_FP, index=False)
+    print(f"[saved] {PLUS_FP}  rows={len(comp):,}  cols={len(comp.columns)}")
+
+    # (1) 1 vs 1 subset
+    one_one = comp[(comp["num_chows_lite"] == 1) & (comp["num_chows_mcr"] == 1)].copy()
+    one_one.to_csv(ONEVONE_FP, index=False)
+    print(f"[saved] {ONEVONE_FP}  rows={len(one_one):,}  cols={len(one_one.columns)}")
+
+    # (2) Mismatches (only_lite / only_mcr / both_yes_different_months)
+    mis = comp[comp["match_type"].isin(["only_lite","only_mcr","both_yes_different_months"])].copy()
+    mis.to_csv(MIS_FP, index=False)
+    print(f"[saved] {MIS_FP}  rows={len(mis):,}  cols={len(mis.columns)}")
 
 print("\n[done]")
