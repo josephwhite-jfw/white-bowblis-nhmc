@@ -2,20 +2,6 @@
 # coding: utf-8
 # ─────────────────────────────────────────────────────────────────────────────
 # Final PBJ Panel with CHOW Dummies + MCR Controls (single script)
-#   * Inputs (data/interim):
-#       - ccn_chow_lite.csv                     (ownership CHOW-lite)
-#       - mcr_chow_provider_events_all.csv      (MCR CHOW wide; POST-2017 aligned)
-#       - pbj_monthly_panel.csv                 (PBJ provider-month panel)
-#   * Optional input (raw/provider-info-files):
-#       - provider_resides_in_hospital_by_ccn.csv (CCN-level in-hospital flag)
-#   * Also reads MCR raw files (SAS preferred; CSV fallback) to BUILD controls:
-#       - ownership_type (For-profit / Nonprofit / Government)
-#       - pct_medicare, pct_medicaid (patient-day shares)
-#       - num_beds (avg beds), occupancy_rate (%), state, urban_rural, is_chain
-#   * Agreement rule for panel inclusion:
-#       - keep (match_0) OR (exactly one CHOW in each and LITE vs MCR first-event
-#         months within ±6 months); anchor change_month to the LITE month.
-#   * Output: data/clean/pbj_panel_with_chow_dummies.csv
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os, re, warnings
@@ -116,7 +102,7 @@ def load_hospital_dropset():
 def build_mcr_controls_monthly():
     """
     Reads SAS first (mcr_flatfile_20??.sas7bdat), else CSVs (mcr_flatfile_20??.csv).
-    Returns monthly controls with columns:
+    Returns monthly controls with:
       cms_certification_number, month, ownership_type, pct_medicare, pct_medicaid,
       num_beds, occupancy_rate, state, urban_rural, is_chain
     """
@@ -134,31 +120,22 @@ def build_mcr_controls_monthly():
 
     print(f"[controls] source={'SAS' if use_sas else 'CSV'}  dir={MCR_DIR}")
 
-    # Column candidates — tuned to your actual 2023 columns
     CAND = dict(
         PRVDR_NUM       = ["PRVDR_NUM","provnum","prvdr_num","Provider Number"],
         FY_BGN_DT       = ["FY_BGN_DT","fy_bgn_dt","Cost Report Fiscal Year beginning date"],
         FY_END_DT       = ["FY_END_DT","fy_end_dt","Cost Report Fiscal Year ending date"],
         MRC_OWNERSHIP   = ["MRC_OWNERSHIP","MRC_ownership","mrc_ownership","MRC_ownership_code"],
-
-        # Patient days (numerator for occupancy)
         PAT_DAYS_TOT    = ["S3_1_PATDAYS_TOTAL","PATDAYS_TOTAL","PATIENT_DAYS_TOTAL"],
         PAT_DAYS_MCR    = ["S3_1_PATDAYS_MEDICARE","PATDAYS_MEDICARE","PATIENT_DAYS_MEDICARE"],
         PAT_DAYS_MCD    = ["S3_1_PATDAYS_MEDICAID","PATDAYS_MEDICAID","PATIENT_DAYS_MEDICAID"],
-
-        # Bed-days available (preferred denominator for occupancy)
         BEDDAYS_AVAIL   = ["S3_1_BEDDAYS_AVAL","BEDDAYS_AVAL","S3_1_BED_DAYS_AVAIL","BED_DAYS_AVAIL"],
-
-        # Beds (preferred → fallbacks)
-        TOT_BEDS        = ["S3_1_TOTALBEDS","TOTAL_BEDS","TOT_BEDS","BEDS","S3_1_BEDS"],  # S3_1_BEDS as fallback too
-        AVG_BEDS        = ["AVG_BEDS","AVERAGE_BEDS","AVG_INPT_BEDS","S3_1_AVG_BEDS"],    # rarely present but keep
-
+        TOT_BEDS        = ["S3_1_TOTALBEDS","TOTAL_BEDS","TOT_BEDS","BEDS","S3_1_BEDS"],
+        AVG_BEDS        = ["AVG_BEDS","AVERAGE_BEDS","AVG_INPT_BEDS","S3_1_AVG_BEDS"],
         STATE           = ["MCR_STATE","STATE","PROV_STATE","STATE_CD","PROV_STATE_CD"],
         URBAN           = ["MCR_URBAN","URBAN_RURAL","URBAN_RURAL_INDICATOR","URBAN_IND","URBAN","URBRUR"],
         HOME_OFFICE     = ["MCR_HOME_OFFICE","HOME_OFFICE","HOME_OFFICE_IND","HOME_OFFICE_INDICATOR","HOME_OFFICE_FLAG"]
     )
-
-    def _pick(cols, names): return find_col(cols, names)
+    def _pick(cols, names): return find_col(cols, CAND[names] if isinstance(names,str) else names)
 
     frames = []
     if use_sas:
@@ -169,22 +146,21 @@ def build_mcr_controls_monthly():
             cols = list(df.columns)
 
             keep = dict(
-                PRVDR_NUM     = _pick(cols, CAND["PRVDR_NUM"]),
-                FY_BGN_DT     = _pick(cols, CAND["FY_BGN_DT"]),
-                FY_END_DT     = _pick(cols, CAND["FY_END_DT"]),
-                MRC_OWNERSHIP = _pick(cols, CAND["MRC_OWNERSHIP"]),
-                PAT_DAYS_TOT  = _pick(cols, CAND["PAT_DAYS_TOT"]),
-                PAT_DAYS_MCR  = _pick(cols, CAND["PAT_DAYS_MCR"]),
-                PAT_DAYS_MCD  = _pick(cols, CAND["PAT_DAYS_MCD"]),
-                BEDDAYS_AVAIL = _pick(cols, CAND["BEDDAYS_AVAIL"]),
-                TOT_BEDS      = _pick(cols, CAND["TOT_BEDS"]),
-                AVG_BEDS      = _pick(cols, CAND["AVG_BEDS"]),
-                STATE         = _pick(cols, CAND["STATE"]),
-                URBAN         = _pick(cols, CAND["URBAN"]),
-                HOME_OFFICE   = _pick(cols, CAND["HOME_OFFICE"]),
+                PRVDR_NUM     = _pick(cols, "PRVDR_NUM"),
+                FY_BGN_DT     = _pick(cols, "FY_BGN_DT"),
+                FY_END_DT     = _pick(cols, "FY_END_DT"),
+                MRC_OWNERSHIP = _pick(cols, "MRC_OWNERSHIP"),
+                PAT_DAYS_TOT  = _pick(cols, "PAT_DAYS_TOT"),
+                PAT_DAYS_MCR  = _pick(cols, "PAT_DAYS_MCR"),
+                PAT_DAYS_MCD  = _pick(cols, "PAT_DAYS_MCD"),
+                BEDDAYS_AVAIL = _pick(cols, "BEDDAYS_AVAIL"),
+                TOT_BEDS      = _pick(cols, "TOT_BEDS"),
+                AVG_BEDS      = _pick(cols, "AVG_BEDS"),
+                STATE         = _pick(cols, "STATE"),
+                URBAN         = _pick(cols, "URBAN"),
+                HOME_OFFICE   = _pick(cols, "HOME_OFFICE"),
             )
 
-            # Fallback: any column that contains both 'HOME' and 'OFFICE'
             if keep["HOME_OFFICE"] is None:
                 ho_like = [c for c in cols if ("HOME" in c and "OFFICE" in c)]
                 if len(ho_like) == 1:
@@ -210,19 +186,19 @@ def build_mcr_controls_monthly():
             cols = list(df.columns)
 
             keep = dict(
-                PRVDR_NUM     = _pick(cols, CAND["PRVDR_NUM"]),
-                FY_BGN_DT     = _pick(cols, CAND["FY_BGN_DT"]),
-                FY_END_DT     = _pick(cols, CAND["FY_END_DT"]),
-                MRC_OWNERSHIP = _pick(cols, CAND["MRC_OWNERSHIP"]),
-                PAT_DAYS_TOT  = _pick(cols, CAND["PAT_DAYS_TOT"]),
-                PAT_DAYS_MCR  = _pick(cols, CAND["PAT_DAYS_MCR"]),
-                PAT_DAYS_MCD  = _pick(cols, CAND["PAT_DAYS_MCD"]),
-                BEDDAYS_AVAIL = _pick(cols, CAND["BEDDAYS_AVAIL"]),
-                TOT_BEDS      = _pick(cols, CAND["TOT_BEDS"]),
-                AVG_BEDS      = _pick(cols, CAND["AVG_BEDS"]),
-                STATE         = _pick(cols, CAND["STATE"]),
-                URBAN         = _pick(cols, CAND["URBAN"]),
-                HOME_OFFICE   = _pick(cols, CAND["HOME_OFFICE"]),
+                PRVDR_NUM     = _pick(cols, "PRVDR_NUM"),
+                FY_BGN_DT     = _pick(cols, "FY_BGN_DT"),
+                FY_END_DT     = _pick(cols, "FY_END_DT"),
+                MRC_OWNERSHIP = _pick(cols, "MRC_OWNERSHIP"),
+                PAT_DAYS_TOT  = _pick(cols, "PAT_DAYS_TOT"),
+                PAT_DAYS_MCR  = _pick(cols, "PAT_DAYS_MCR"),
+                PAT_DAYS_MCD  = _pick(cols, "PAT_DAYS_MCD"),
+                BEDDAYS_AVAIL = _pick(cols, "BEDDAYS_AVAIL"),
+                TOT_BEDS      = _pick(cols, "TOT_BEDS"),
+                AVG_BEDS      = _pick(cols, "AVG_BEDS"),
+                STATE         = _pick(cols, "STATE"),
+                URBAN         = _pick(cols, "URBAN"),
+                HOME_OFFICE   = _pick(cols, "HOME_OFFICE"),
             )
 
             if keep["HOME_OFFICE"] is None:
@@ -260,22 +236,24 @@ def build_mcr_controls_monthly():
     for c in ["PAT_DAYS_TOT","PAT_DAYS_MCR","PAT_DAYS_MCD","BEDDAYS_AVAIL","AVG_BEDS","TOT_BEDS"]:
         raw[c] = pd.to_numeric(raw[c], errors="coerce")
 
-    # Ownership mapping
-    CODE_TO_OWN = {
-        "3":"Government","4":"Government","8":"Government","10":"Government",
-        "11":"Government","12":"Government","13":"Government",
-        "5":"For-profit","6":"For-profit","7":"For-profit","9":"For-profit",
-        "1":"Nonprofit","2":"Nonprofit",
-        "0": None
-    }
-    raw["_own_code"] = raw["MRC_OWNERSHIP"].astype("string").str.strip().str.replace(r"\.0$", "", regex=True)
-    raw["ownership_type"] = raw["_own_code"].map(CODE_TO_OWN)
+    # -------- OWNERSHIP MAPPING (FIXED) --------
+    # 1–2 => Nonprofit, 3–6 => For-profit, 7–13 => Government. 0/blank => None
+    def map_ownership_bucket(code_str: str):
+        if code_str is None or (isinstance(code_str, float) and pd.isna(code_str)):
+            return None
+        s = str(code_str).strip().upper().replace(".0", "")
+        if s in {"1","2"}:                  return "Nonprofit"
+        if s in {"3","4","5","6"}:          return "For-profit"
+        if s in {"7","8","9","10","11","12","13"}: return "Government"
+        return None
 
-    # State
+    raw["_own_code"] = raw["MRC_OWNERSHIP"]
+    raw["ownership_type"] = raw["_own_code"].map(map_ownership_bucket)
+
+    # State / urban-rural / chain
     raw["state"] = raw["STATE"].astype("string").str.strip().str.upper()
     raw.loc[raw["state"].isin(["", "NA", "NAN", "NONE"]), "state"] = pd.NA
 
-    # Urban/Rural normalization ⇒ "Urban"/"Rural"
     def _norm_urban(x):
         if x is None or (isinstance(x, float) and pd.isna(x)): return pd.NA
         s = str(x).strip().upper()
@@ -284,7 +262,6 @@ def build_mcr_controls_monthly():
         return pd.NA
     raw["urban_rural"] = raw["URBAN"].apply(_norm_urban)
 
-    # Chain (home office) ⇒ 1/0
     def _to_chain_flag(val):
         if val is None or (isinstance(val, float) and pd.isna(val)): return 0
         try:
@@ -299,8 +276,7 @@ def build_mcr_controls_monthly():
     # Fiscal period days (inclusive)
     period_days = (raw["FY_END_DT"] - raw["FY_BGN_DT"]).dt.days.add(1).where(lambda s: s > 0)
 
-    # ---------- KEY FIXES ----------
-    # num_beds: prefer TOTALBEDS (or BEDS), else AVG_BEDS, else derive from BEDDAYS_AVAIL / period_days
+    # Beds / occupancy
     raw["num_beds"] = np.select(
         [
             raw["TOT_BEDS"].notna(),
@@ -315,8 +291,6 @@ def build_mcr_controls_monthly():
         default=np.nan
     )
 
-    # occupancy_rate (%) = PAT_DAYS_TOT / BEDDAYS_AVAIL * 100  (primary);
-    # fallback: PAT_DAYS_TOT / (num_beds * period_days) * 100
     den_primary = raw["BEDDAYS_AVAIL"]
     den_fallback = raw["num_beds"] * period_days
     occ = np.where(
@@ -330,7 +304,7 @@ def build_mcr_controls_monthly():
     )
     raw["occupancy_rate"] = pd.to_numeric(occ, errors="coerce").clip(0, 100)
 
-    # payer mix (clip 0..100)
+    # payer mix
     def _share(n, d): return pd.to_numeric(100.0 * (n / d), errors="coerce")
     raw["pct_medicare"] = _share(raw["PAT_DAYS_MCR"], raw["PAT_DAYS_TOT"]).clip(0, 100)
     raw["pct_medicaid"] = _share(raw["PAT_DAYS_MCD"], raw["PAT_DAYS_TOT"]).clip(0, 100)
@@ -511,7 +485,8 @@ if not controls_monthly.empty:
     # Merge controls by CCN×month
     panel = panel.merge(
         controls_monthly,
-        on=["cms_certification_number","month"],
+        left_on=["cms_certification_number","month"],
+        right_on=["cms_certification_number","month"],
         how="left"
     )
 
@@ -526,14 +501,14 @@ if not controls_monthly.empty:
     # Sort for fills
     panel = panel.sort_values(["cms_certification_number","month"]).reset_index(drop=True)
 
-    # Categorical fills (as before)
+    # Categorical fills
     for cat_col in ["ownership_type","state","urban_rural","is_chain"]:
         if cat_col in panel.columns:
             panel[cat_col] = panel.groupby("cms_certification_number")[cat_col].transform(lambda s: s.ffill().bfill())
     if "is_chain" in panel.columns:
         panel["is_chain"] = panel["is_chain"].fillna(0).astype("Int8")
 
-    # NEW: Numeric fills — carry forward/back within CCN to cover small gaps
+    # Numeric fills
     for num_col in ["num_beds","occupancy_rate","pct_medicare","pct_medicaid"]:
         if num_col in panel.columns:
             panel[num_col] = panel.groupby("cms_certification_number")[num_col].transform(lambda s: s.ffill().bfill())
@@ -544,6 +519,19 @@ if not controls_monthly.empty:
             panel[c] = pd.to_numeric(panel[c], errors="coerce").clip(0, 100)
     if "num_beds" in panel.columns:
         panel["num_beds"] = pd.to_numeric(panel["num_beds"], errors="coerce")
+
+    # -------- NEW: Ownership dummies (Govt = base) --------
+    if "ownership_type" in panel.columns:
+        panel["ownership_type"] = panel["ownership_type"].astype("string")
+        panel["for_profit"]  = (panel["ownership_type"].str.upper() == "FOR-PROFIT").astype("Int8")
+        panel["non_profit"]  = (panel["ownership_type"].str.upper() == "NONPROFIT").astype("Int8")
+        # quick sanity on the mix
+        mix = (panel.drop_duplicates(["cms_certification_number"])
+                     .assign(owner_bucket=panel["ownership_type"].str.upper())
+                     .groupby("owner_bucket").size()
+                     .sort_values(ascending=False))
+        print("\n[ownership mix by CCN (post-merge, first non-missing)]")
+        print(mix.to_string())
 
     # --- Join audit AFTER fills ---
     post_counts = {c: int(panel[c].notna().sum()) for c in audit_cols if c in panel.columns}
@@ -558,8 +546,8 @@ else:
 panel = panel.sort_values(["cms_certification_number","month"]).reset_index(drop=True)
 panel.to_csv(OUT_FP, index=False)
 cols_show = [c for c in ["cms_certification_number","month","agreement","change_month",
-                         "treat_post","event_time","ownership_type","pct_medicare",
-                         "pct_medicaid","num_beds","occupancy_rate","state","urban_rural","is_chain"]
+                         "treat_post","event_time","ownership_type","for_profit","non_profit",
+                         "pct_medicare","pct_medicaid","num_beds","occupancy_rate","state","urban_rural","is_chain"]
              if c in panel.columns]
 print(f"[save] {OUT_FP} rows={len(panel):,} cols={panel.shape[1]}")
 print(panel[cols_show].head(12))
