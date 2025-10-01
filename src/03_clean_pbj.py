@@ -118,10 +118,13 @@ def normalize_needed_columns(df_raw: pd.DataFrame) -> pd.DataFrame:
 
 # ====================== File → Monthly Aggregation ============================
 def process_file_monthly(fp: Path) -> pd.DataFrame:
-    """Build monthly totals per CCN from one file (keep all rows; no filtering)."""
+    """
+    Build monthly totals per CCN from one PBJ file.
+    HPPD/HPRD = monthly sum of hours / monthly sum of daily MDS census (resident-days).
+    """
     df = normalize_needed_columns(read_csv_robust(fp))
 
-    # daily totals, add month metadata
+    # 1) Daily totals per CCN×date (sum hours, mean census for that day if multiple rows)
     daily = (df.groupby(["cms_certification_number","workdate"], as_index=False)
                .agg(hrs_rn=("hrs_rn","sum"),
                     hrs_lpn=("hrs_lpn","sum"),
@@ -131,32 +134,43 @@ def process_file_monthly(fp: Path) -> pd.DataFrame:
     daily["year_month"]  = daily["workdate"].dt.to_period("M")
     daily["days_in_month"] = daily["workdate"].dt.days_in_month
 
-    # monthly aggregation (keep all)
+    # 2) Monthly aggregation:
+    #    - hours: SUM
+    #    - resident-days: SUM of daily census over the month
+    #    - average daily census: MEAN (kept for reference)
     monthly = (daily.groupby(["cms_certification_number","year_month"], as_index=False)
                     .agg(hrs_rn=("hrs_rn","sum"),
                          hrs_lpn=("hrs_lpn","sum"),
                          hrs_cna=("hrs_cna","sum"),
                          total_hours=("total_hours","sum"),
-                         mds_census=("mds_census","mean"),
+                         resident_days=("mds_census","sum"),   # <-- key denominator
+                         avg_daily_census=("mds_census","mean"),
                          days_reported=("workdate","nunique"),
                          days_in_month=("days_in_month","max")))
     monthly["coverage_ratio"] = monthly["days_reported"] / monthly["days_in_month"]
 
-    # per-patient metrics
-    denom = monthly["mds_census"].replace({0: np.nan})
-    monthly["hrs_rn_per_patient"]      = monthly["hrs_rn"]      / denom
-    monthly["hrs_lpn_per_patient"]     = monthly["hrs_lpn"]     / denom
-    monthly["hrs_cna_per_patient"]     = monthly["hrs_cna"]     / denom
-    monthly["total_hours_per_patient"] = monthly["total_hours"] / denom
+    # 3) HPPD/HPRD (guard against 0 / NaN resident_days)
+    denom = monthly["resident_days"].replace({0: np.nan})
+    monthly["hprd_rn"]    = monthly["hrs_rn"]    / denom
+    monthly["hprd_lpn"]   = monthly["hrs_lpn"]   / denom
+    monthly["hprd_cna"]   = monthly["hrs_cna"]   / denom
+    monthly["hprd_total"] = monthly["total_hours"] / denom
 
-    # labels + types
+    # 4) Labels + types
     monthly["month"] = monthly["year_month"].dt.strftime("%m/%Y")
-    for c in ["hrs_rn","hrs_lpn","hrs_cna","total_hours","mds_census",
-              "hrs_rn_per_patient","hrs_lpn_per_patient","hrs_cna_per_patient",
-              "total_hours_per_patient","coverage_ratio"]:
-        monthly[c] = monthly[c].astype("float32")
+
+    float_cols = [
+        "hrs_rn","hrs_lpn","hrs_cna","total_hours",
+        "resident_days","avg_daily_census",
+        "hprd_rn","hprd_lpn","hprd_cna","hprd_total",
+        "coverage_ratio",
+    ]
+    for c in float_cols:
+        monthly[c] = pd.to_numeric(monthly[c], errors="coerce").astype("float32")
+
     monthly["days_reported"] = monthly["days_reported"].astype("Int16")
     monthly["days_in_month"] = monthly["days_in_month"].astype("Int16")
+
     return monthly
 
 # ============================== Coverage / Gaps ===============================
@@ -249,8 +263,9 @@ def main():
     if not monthly.empty:
         monthly = monthly[[
             "cms_certification_number","month","year_month","month_index","gap_from_prev_months",
-            "hrs_rn","hrs_lpn","hrs_cna","total_hours","mds_census",
-            "hrs_rn_per_patient","hrs_lpn_per_patient","hrs_cna_per_patient","total_hours_per_patient",
+            "hrs_rn","hrs_lpn","hrs_cna","total_hours",
+            "resident_days","avg_daily_census",
+            "hprd_rn","hprd_lpn","hprd_cna","hprd_total",
             "days_reported","days_in_month","coverage_ratio"
         ]]
         monthly["year_month"] = monthly["year_month"].astype("period[M]").astype(str)
