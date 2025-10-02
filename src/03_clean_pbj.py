@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 # coding: utf-8
 # ─────────────────────────────────────────────────────────────────────────────
-# PBJ Nurse Staffing — Monthly Panel (keep-all + gap/coverage tracking)
+# PBJ Nurse Staffing — Monthly Panel (HPPD for RN/LPN/CNA/Total)
 #   * Reads pbj_nurse_YYYY_Q*.csv from RAW_DIR/pbj-nurse
-#   * Alphanumeric-safe CCN normalization (matches ownership/provider logic)
-#   * NO outlier or coverage-based row drops (we still compute coverage fields)
-#   * Tracks gaps per CCN (gap_from_prev_months) + provider-level coverage summary
+#   * CCN normalization (keeps alphanumeric; zero-pad numeric to 6)
+#   * Daily → Monthly aggregation
+#       - resident_days = Σ daily MDS census within month
+#       - *_hours_month = Σ daily hours within month
+#       - *_hppd = *_hours_month / resident_days
+#   * Coverage + gap tracking
 #   * Saves:
 #       - data/interim/pbj_monthly_panel.csv
 #       - data/interim/pbj_monthly_coverage.csv
+#       - data/interim/pbj_monthly_panel_analysis_ready.csv (optional filtered)
 #   * Run with: %run 03_clean_pbj.py
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -30,15 +34,24 @@ PBJ_GLOB = "pbj_nurse_????_Q[1-4].csv"
 
 INTERIM_DIR = PROJECT_ROOT / "data" / "interim"
 INTERIM_DIR.mkdir(parents=True, exist_ok=True)
-OUT_FP = INTERIM_DIR / "pbj_monthly_panel.csv"
-COV_FP = INTERIM_DIR / "pbj_monthly_coverage.csv"
+
+OUT_FP      = INTERIM_DIR / "pbj_monthly_panel.csv"
+COV_FP      = INTERIM_DIR / "pbj_monthly_coverage.csv"
+OUT_READY   = INTERIM_DIR / "pbj_monthly_panel_analysis_ready.csv"
+
+# Keep raw monthly hours columns alongside HPPD? (set False to drop)
+KEEP_HOUR_TOTALS = True
+# Optional “analysis-ready” filter thresholds
+READY_MIN_COVERAGE = 0.80
+READY_MIN_RES_DAYS = 100
 
 print(f"[paths] RAW_DIR={RAW_DIR}")
 print(f"[paths] PBJ_DIR={PBJ_DIR}")
 print(f"[paths] OUT_FP={OUT_FP}")
 print(f"[paths] COV_FP={COV_FP}")
+print(f"[paths] OUT_READY={OUT_READY}")
 
-# ============================== CSV Reader ====================================
+# ============================== Robust CSV Reader =============================
 def read_csv_robust(fp: Path) -> pd.DataFrame:
     encodings = ["utf-8", "utf-8-sig", "cp1252", "latin1"]
     last_err = None
@@ -55,7 +68,7 @@ def read_csv_robust(fp: Path) -> pd.DataFrame:
             last_err = e
     raise last_err
 
-# ============================== CCN Normalization =============================
+# ============================== Helpers ======================================
 def normalize_ccn_any(series: pd.Series) -> pd.Series:
     """
     Preserve alphanumeric CCNs; strip separators; pad only if numeric.
@@ -84,7 +97,7 @@ def normalize_needed_columns(df_raw: pd.DataFrame) -> pd.DataFrame:
     if "mdscensus" in df.columns and "mds_census" not in df.columns:
         df.rename(columns={"mdscensus": "mds_census"}, inplace=True)
 
-    # ensure hour cols
+    # ensure hour cols exist (fill missing with 0)
     for col in ["hrs_rn", "hrs_lpn", "hrs_cna"]:
         if col not in df.columns:
             df[col] = 0.0
@@ -93,7 +106,7 @@ def normalize_needed_columns(df_raw: pd.DataFrame) -> pd.DataFrame:
     if "cms_certification_number" in df.columns:
         df["cms_certification_number"] = normalize_ccn_any(df["cms_certification_number"])
     else:
-        warnings.warn("Missing cms_certification_number/provnum")
+        raise ValueError("Missing cms_certification_number/provnum")
 
     # workdate
     if "workdate" in df.columns:
@@ -108,7 +121,7 @@ def normalize_needed_columns(df_raw: pd.DataFrame) -> pd.DataFrame:
     for c in ["hrs_rn", "hrs_lpn", "hrs_cna"]:
         df[c] = pd.to_numeric(df[c], errors="coerce").astype("float32").fillna(0.0)
 
-    # census optional
+    # daily census numeric (optional column → we still need it for HPPD)
     if "mds_census" not in df.columns:
         df["mds_census"] = np.nan
     df["mds_census"] = pd.to_numeric(df["mds_census"], errors="coerce").astype("float32")
@@ -120,7 +133,7 @@ def normalize_needed_columns(df_raw: pd.DataFrame) -> pd.DataFrame:
 def process_file_monthly(fp: Path) -> pd.DataFrame:
     """
     Build monthly totals per CCN from one PBJ file.
-    HPPD/HPRD = monthly sum of hours / monthly sum of daily MDS census (resident-days).
+    HPPD = monthly sum of hours / monthly sum of daily MDS census (resident-days).
     """
     df = normalize_needed_columns(read_csv_robust(fp))
 
@@ -130,39 +143,42 @@ def process_file_monthly(fp: Path) -> pd.DataFrame:
                     hrs_lpn=("hrs_lpn","sum"),
                     hrs_cna=("hrs_cna","sum"),
                     mds_census=("mds_census","mean")))
+    # Derived totals
     daily["total_hours"] = daily[["hrs_rn","hrs_lpn","hrs_cna"]].sum(axis=1).astype("float32")
     daily["year_month"]  = daily["workdate"].dt.to_period("M")
     daily["days_in_month"] = daily["workdate"].dt.days_in_month
 
     # 2) Monthly aggregation:
-    #    - hours: SUM
-    #    - resident-days: SUM of daily census over the month
-    #    - average daily census: MEAN (kept for reference)
+    #    - *_hours_month: Σ hours across all days in that month
+    #    - resident_days: Σ daily census (denominator)
+    #    - coverage_ratio: (# distinct workdates reported) / (days_in_month)
     monthly = (daily.groupby(["cms_certification_number","year_month"], as_index=False)
-                    .agg(hrs_rn=("hrs_rn","sum"),
-                         hrs_lpn=("hrs_lpn","sum"),
-                         hrs_cna=("hrs_cna","sum"),
+                    .agg(rn_hours_month=("hrs_rn","sum"),
+                         lpn_hours_month=("hrs_lpn","sum"),
+                         cna_hours_month=("hrs_cna","sum"),
                          total_hours=("total_hours","sum"),
-                         resident_days=("mds_census","sum"),   # <-- key denominator
+                         resident_days=("mds_census","sum"),
                          avg_daily_census=("mds_census","mean"),
                          days_reported=("workdate","nunique"),
                          days_in_month=("days_in_month","max")))
+
     monthly["coverage_ratio"] = monthly["days_reported"] / monthly["days_in_month"]
 
-    # 3) HPPD/HPRD (guard against 0 / NaN resident_days)
+    # 3) HPPD (guard against 0 / NaN resident_days)
     denom = monthly["resident_days"].replace({0: np.nan})
-    monthly["hprd_rn"]    = monthly["hrs_rn"]    / denom
-    monthly["hprd_lpn"]   = monthly["hrs_lpn"]   / denom
-    monthly["hprd_cna"]   = monthly["hrs_cna"]   / denom
-    monthly["hprd_total"] = monthly["total_hours"] / denom
+    monthly["rn_hppd"]    = monthly["rn_hours_month"]  / denom
+    monthly["lpn_hppd"]   = monthly["lpn_hours_month"] / denom
+    monthly["cna_hppd"]   = monthly["cna_hours_month"] / denom
+    monthly["total_hppd"] = monthly["total_hours"]     / denom
 
     # 4) Labels + types
     monthly["month"] = monthly["year_month"].dt.strftime("%m/%Y")
 
+    # Dtypes
     float_cols = [
-        "hrs_rn","hrs_lpn","hrs_cna","total_hours",
+        "rn_hours_month","lpn_hours_month","cna_hours_month","total_hours",
         "resident_days","avg_daily_census",
-        "hprd_rn","hprd_lpn","hprd_cna","hprd_total",
+        "rn_hppd","lpn_hppd","cna_hppd","total_hppd",
         "coverage_ratio",
     ]
     for c in float_cols:
@@ -170,6 +186,10 @@ def process_file_monthly(fp: Path) -> pd.DataFrame:
 
     monthly["days_reported"] = monthly["days_reported"].astype("Int16")
     monthly["days_in_month"] = monthly["days_in_month"].astype("Int16")
+
+    # Optionally drop raw hour totals if you don't want them in final file
+    if not KEEP_HOUR_TOTALS:
+        monthly.drop(columns=["rn_hours_month","lpn_hours_month","cna_hours_month","total_hours"], inplace=True)
 
     return monthly
 
@@ -203,7 +223,7 @@ def add_gap_tracking(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     cov["has_gaps"] = cov["any_gaps"].astype(bool)
     cov.drop(columns=["any_gaps"], inplace=True)
 
-    # pretty labels from actual periods
+    # pretty month labels from actual periods
     first_last = df.groupby("cms_certification_number").agg(
         first_month=("year_month","min"),
         last_month =("year_month","max")
@@ -230,11 +250,12 @@ def print_quick_summary(monthly: pd.DataFrame, cov: pd.DataFrame):
             print(f"avg gap={g.mean():.2f}  |  median gap={g.median():.0f}  |  share rows gap>0={(g>0).mean():.2%}")
         if covr is not None and len(covr):
             print(f"avg coverage={covr.mean():.3f}  |  median coverage={covr.median():.3f}  |  share coverage<0.5={(covr<0.5).mean():.2%}")
-        if not cov.empty:
-            with_gaps = int((cov["has_gaps"]==True).sum())
-            without   = int((cov["has_gaps"]==False).sum())
-            print(f"providers with gaps={with_gaps:,}  |  without gaps={without:,}")
-            print(f"avg months expected={cov['months_expected'].mean():.1f}  |  observed={cov['months_observed'].mean():.1f}  |  missing={cov['months_missing'].mean():.1f}")
+
+        for k in ["rn_hppd","lpn_hppd","cna_hppd","total_hppd"]:
+            if k in monthly.columns:
+                desc = monthly[k].describe(percentiles=[.01,.05,.5,.95,.99])
+                print(f"\n[{k}]")
+                print(desc)
     except Exception as e:
         print(f"[warn] quick summary failed: {e}")
 
@@ -261,20 +282,40 @@ def main():
 
     # Final order & CSV-friendly period
     if not monthly.empty:
-        monthly = monthly[[
+        # Keep consistent field order
+        base_cols = [
             "cms_certification_number","month","year_month","month_index","gap_from_prev_months",
-            "hrs_rn","hrs_lpn","hrs_cna","total_hours",
             "resident_days","avg_daily_census",
-            "hprd_rn","hprd_lpn","hprd_cna","hprd_total",
-            "days_reported","days_in_month","coverage_ratio"
-        ]]
+            "rn_hppd","lpn_hppd","cna_hppd","total_hppd",
+            "days_reported","days_in_month","coverage_ratio",
+        ]
+        if KEEP_HOUR_TOTALS:
+            base_cols = ([
+                "cms_certification_number","month","year_month","month_index","gap_from_prev_months",
+                "rn_hours_month","lpn_hours_month","cna_hours_month","total_hours",
+                "resident_days","avg_daily_census",
+                "rn_hppd","lpn_hppd","cna_hppd","total_hppd",
+                "days_reported","days_in_month","coverage_ratio",
+            ])
+        # Coerce year_month to str for CSV stability
         monthly["year_month"] = monthly["year_month"].astype("period[M]").astype(str)
+        monthly = monthly[base_cols]
 
     # Save
     monthly.to_csv(OUT_FP, index=False)
     cov.to_csv(COV_FP, index=False)
     print(f"[saved] panel    → {OUT_FP}")
     print(f"[saved] coverage → {COV_FP}")
+
+    # Optional analysis-ready export (coverage + resident-days screens)
+    if not monthly.empty:
+        m2 = monthly.copy()
+        m2 = m2[(m2["coverage_ratio"] >= READY_MIN_COVERAGE) &
+                (pd.to_numeric(m2["resident_days"], errors="coerce") >= READY_MIN_RES_DAYS)]
+        # Require finite total_hppd
+        m2 = m2[np.isfinite(m2["total_hppd"].astype(float))]
+        m2.to_csv(OUT_READY, index=False)
+        print(f"[saved] analysis-ready → {OUT_READY}  (rows={len(m2):,})")
 
     # Summary
     print_quick_summary(monthly, cov)
