@@ -1,372 +1,274 @@
-#!/usr/bin/env python
-# coding: utf-8
-# ─────────────────────────────────────────────────────────────────────────────
-# PBJ Controls from MCR (monthly, SAS-first; CSV fallback)
-#   * Scans RAW_DIR/medicare-cost-reports for mcr_flatfile_20??.(sas7bdat|csv)
-#   * Prefers SAS for accurate codes; falls back to CSV if SAS missing
-#   * Keeps alphanumeric CCNs (pad only if purely numeric)
-#   * Expands each cost-report period to monthly rows
-#   * Controls:
-#       - ownership_type (For-profit / Nonprofit / Government) from MRC_ownership code
-#       - pct_medicare, pct_medicaid (patient-day shares)
-#       - num_beds (avg), occupancy_rate (%)
-#       - state (2-letter), urban_rural (Urban/Rural)
-#       - is_chain (1 if has Home Office / chain indicator, else 0)
-#   * Output: data/interim/pbj_controls_from_mcr_monthly.csv
-# ─────────────────────────────────────────────────────────────────────────────
-
+# %% Provider acuity test — OneDrive yearly zips → monthly zips → provider CSVs
+import re, zipfile
+from io import BytesIO
 from pathlib import Path
 import pandas as pd
 import numpy as np
 
-# ---------------- Paths ----------------
-RAW_DIR = Path(r"C:\Users\Owner\OneDrive\NursingHomeData")
-MCR_DIR = RAW_DIR / "medicare-cost-reports"
+# -------------------- Paths (explicit, as requested) --------------------
+NH_ZIP_DIR  = Path(r"C:\Users\Owner\OneDrive\NursingHomeData\nh-compare")
+INTERIM_DIR = Path(r"C:\Repositories\white-bowblis-nhmc\data\interim"); INTERIM_DIR.mkdir(parents=True, exist_ok=True)
+OUT_FP      = INTERIM_DIR / "provider_acuity_test_only.csv"
 
-REPO = Path.cwd()
-while not (REPO / "data").is_dir() and REPO != REPO.parent:
-    REPO = REPO.parent
-INTERIM = REPO / "data" / "interim"
-INTERIM.mkdir(parents=True, exist_ok=True)
-
-OUT_FP = INTERIM / "pbj_controls_from_mcr_monthly.csv"
-
-print(f"[paths] RAW_DIR={RAW_DIR}")
-print(f"[paths] MCR_DIR={MCR_DIR}")
+print(f"[paths] NH_ZIP_DIR={NH_ZIP_DIR}")
+print(f"[paths] INTERIM_DIR={INTERIM_DIR}")
 print(f"[out]   {OUT_FP}")
 
-# ---------------- Helpers ----------------
-def normalize_ccn_any(s: pd.Series) -> pd.Series:
-    """Alphanumeric-safe CCN normalization: strip separators, pad only if all digits."""
-    s = s.astype("string").fillna("").str.strip().str.upper()
+# -------------------- Small utils --------------------
+def safe_read_csv(raw: bytes) -> pd.DataFrame:
+    attempts = [
+        dict(dtype=str, low_memory=False),
+        dict(dtype=str, low_memory=False, encoding="utf-8-sig"),
+        dict(dtype=str, low_memory=False, encoding="cp1252"),
+        dict(dtype=str, low_memory=False, engine="python", sep=None),
+        dict(dtype=str, low_memory=False, engine="python", sep=None, encoding="cp1252"),
+    ]
+    last_err = None
+    for kw in attempts:
+        try:
+            return pd.read_csv(BytesIO(raw), **kw)
+        except Exception as e:
+            last_err = e
+    raise last_err
+
+def norm_cols(df: pd.DataFrame) -> pd.DataFrame:
+    df.columns = pd.Index(df.columns).str.strip()
+    return df
+
+def normalize_ccn_any(series: pd.Series) -> pd.Series:
+    s = series.astype("string").fillna("").str.strip().str.upper()
     s = s.str.replace(r"[ \-\/\.]", "", regex=True)
-    is_digits = s.str.fullmatch(r"\d+")
-    return s.mask(is_digits, s.str.zfill(6)).replace({"": pd.NA})
+    digits = s.str.fullmatch(r"\d+")
+    s = s.mask(digits, s.str.zfill(6)).replace({"": pd.NA})
+    return s
 
-def month_range_df(start, end) -> pd.DataFrame:
-    """Closed monthly span from start..end (month-start Timestamps)."""
-    if pd.isna(start) or pd.isna(end):
-        return pd.DataFrame({"month_start":[]})
-    s = pd.Period(start, "M").to_timestamp()
-    e = pd.Period(end,   "M").to_timestamp()
-    if e < s:
-        s, e = e, s
-    months = pd.period_range(s, e, freq="M").to_timestamp()  # month-starts
-    return pd.DataFrame({"month_start": months})
+def to_month(x):
+    dt = pd.to_datetime(x, errors="coerce")
+    return dt.dt.to_period("M").dt.to_timestamp("s")
 
-# Collapse ownership codes → 3 buckets, based on MCR/HCRIS documentation:
-# For-profit:    {5,6,7,9}
-# Nonprofit:     {1,2}
-# Government:    {3,4,8,10,11,12,13}
-OWN_FOR_PROFIT = {"5","6","7","9"}
-OWN_NONPROFIT  = {"1","2"}
-OWN_GOVT       = {"3","4","8","10","11","12","13"}
+def to_yes_no_flag(s: pd.Series) -> pd.Series:
+    s = s.astype("string").str.strip().str.upper()
+    s = s.replace({"": pd.NA, "NA": pd.NA, "NAN": pd.NA})
+    yes = {"Y","YES","1","TRUE","T"}
+    no  = {"N","NO","0","FALSE","F"}
+    out = pd.Series(pd.NA, index=s.index, dtype="object")
+    out = out.mask(s.isin(yes), "YES").mask(s.isin(no), "NO")
+    return out
 
-def collapse_ownership_code(code: str):
-    """Map raw ownership code string (e.g., '4', '11', or '4.0') to 3 buckets or <NA>."""
-    if code is None:
-        return pd.NA
-    s = str(code).strip()
-    if s == "" or s.lower() in {"nan","na","none"}:
-        return pd.NA
-    if s.endswith(".0"):
-        s = s[:-2]
-    if s in OWN_FOR_PROFIT:
-        return "For-profit"
-    if s in OWN_NONPROFIT:
-        return "Nonprofit"
-    if s in OWN_GOVT:
-        return "Government"
-    return pd.NA
-
-def pick(colnames, *candidates):
-    lower = {c.lower(): c for c in colnames}
+def pick(cols, candidates):
+    lookup = {c.lower(): c for c in cols}
     for cand in candidates:
-        if cand and cand.lower() in lower:
-            return lower[cand.lower()]
+        if cand and cand.lower() in lookup:
+            return lookup[cand.lower()]
+    # loose token match
+    for cand in candidates:
+        if not cand: continue
+        toks = [t for t in re.split(r"[^A-Za-z0-9]+", cand) if t]
+        for c in cols:
+            if all(t.lower() in c.lower() for t in toks):
+                return c
     return None
 
-def coerce_state(s):
-    if s is None:
-        return pd.NA
-    x = str(s).strip().upper()
-    if len(x) == 2 and x.isalpha():
-        return x
-    return pd.NA
-
-def coerce_urban_rural(x):
-    if x is None or (isinstance(x, float) and pd.isna(x)):
-        return pd.NA
-    s = str(x).strip().upper()
-    if s in {"U","URBAN","1","Y","YES"}:
-        return "Urban"
-    if s in {"R","RURAL","0","N","NO"}:
-        return "Rural"
-    # Sometimes codes are 1/2; treat 2 as Rural as a fallback if seen
-    if s == "2":
-        return "Rural"
-    return pd.NA
-
-# --- Chain (Home Office) helpers --------------------------------------------
-HOME_OFFICE_CANDIDATES = [
-    "HOME_OFFICE", "HOME_OFFICE_IND", "HOME_OFFICE_FLAG", "MCR_HOME_OFFICE",
-    "S2_1_HOME_OFFICE", "S2_2_HOME_OFFICE", "HO_IND", "HOME_OFFICE_INDICATOR"
+# Column candidates
+PRIMARY_CCN_ORDER = [
+    "CMS Certification Number (CCN)",
+    "cms certification number",
+    "Federal Provider Number",
+    "Provider Number",
+    "PROVNUM",
+    "PRVDR_NUM",
 ]
 
-def to_chain_flag(val):
-    """
-    Convert a raw 'home office' field to {0,1}:
-      * numeric -> 1 if != 0
-      * string  -> 1 if non-empty and not in {0, '0', 'N', 'NO', 'NONE', 'FALSE', 'F'}
-      * otherwise -> 0
-    """
-    if val is None or (isinstance(val, float) and pd.isna(val)):
-        return 0
-    try:
-        f = float(str(val).strip())
-        return int(f != 0.0)
-    except Exception:
-        s = str(val).strip().upper()
-        if s in {"", "0", "N", "NO", "NONE", "FALSE", "F"}:
-            return 0
-        return 1
+CCRC_CANDS = [
+    "CCRC_FACIL",
+    "Continuing Care Retirement Community",
+    "CCRC",
+]
 
-# Columns we try to read (allow case variants & flexible names)
-NEEDED_BASE = {
-    "PRVDR_NUM",                 # CCN
-    "FY_BGN_DT", "FY_END_DT",    # report period
-    "MRC_OWNERSHIP", "MRC_ownership", "MRC_ownership_code",  # ownership code
-    "S3_1_PATDAYS_TOTAL",
-    "S3_1_PATDAYS_MEDICARE",
-    "S3_1_PATDAYS_MEDICAID",
-}
-# Extra for controls:
-EXTRA_CANDS = {
-    "state": ["MCR_STATE","STATE","PROV_STATE","STATE_CD"],
-    "urban": ["MCR_URBAN","URBAN_RURAL","URBAN_IND","URBAN","URBRUR"],
-    "bed_days": ["BED_DAYS","S3_1_BED_DAYS","TOT_BED_DAYS","G3_BED_DAYS"],
-    "avg_beds": ["AVG_BEDS","AVERAGE_BEDS","AVG_INPT_BEDS","S3_1_AVG_BEDS"],
-    "inpt_beds": ["INPATIENT_BEDS","TOT_CERT_BEDS","S3_1_TOT_BEDS","TOTAL_BEDS"],
-}
+SFF_CANDS = [
+    "SFF",                      # older flat “SFF” column (Y/N)
+    "Special Focus Status",     # newer “NONE / CANDIDATE / SFF”
+    "SFF Status",
+    "SFF_STATUS",
+]
 
-def load_single_year(year: int) -> pd.DataFrame:
-    """Load one year, prefer SAS, fallback to CSV. Return subset with canonical columns."""
-    sas_fp = MCR_DIR / f"mcr_flatfile_{year}.sas7bdat"
-    csv_fp = MCR_DIR / f"mcr_flatfile_{year}.csv"
+CM_TOTAL_CANDS = [
+    "CM_TOTAL",
+    "Case-Mix Total Nurse Staffing Hours per Resident per Day",
+    "CASE-MIX TOTAL NURSE STAFFING HOURS PER RESIDENT PER DAY",
+    "CM TOTAL",
+]
 
-    df = None
-    src = None
+MONTH_CANDS = [
+    "Processing Date", "FILEDATE", "Filedate", "PROCESSING_DATE", "FILE_DATE", "Month"
+]
 
-    if sas_fp.exists():
-        try:
-            import pyreadstat
-            df, meta = pyreadstat.read_sas7bdat(str(sas_fp))
-            src = "sas"
-            print(f"[read] {sas_fp.name} (SAS) rows={len(df):,} cols={df.shape[1]}")
-        except Exception as e:
-            print(f"[warn] {sas_fp.name} failed: {e}")
+# Parse MM/YYYY from inner zip names
+MONTH_RE = r"(0[1-9]|1[0-2])"; YEAR_RE = r"(20\d{2})"
+FN_PATTERNS = [
+    re.compile(rf"nh_archive_{MONTH_RE}_{YEAR_RE}", re.I),
+    re.compile(rf"nh_archive_{YEAR_RE}_{MONTH_RE}", re.I),
+    re.compile(rf"nursing_homes_including_rehab_services_archive_{MONTH_RE}_{YEAR_RE}", re.I),
+    re.compile(rf"(?:^|[_-]){MONTH_RE}[_-]{YEAR_RE}(?:[_-]|$)", re.I),
+    re.compile(rf"(?:^|[_-]){YEAR_RE}[_-]{MONTH_RE}(?:[_-]|$)", re.I),
+]
+def parse_mm_yyyy_from_name(name: str):
+    for pat in FN_PATTERNS:
+        m = pat.search(name)
+        if m:
+            nums = [int(x) for x in m.groups() if x and x.isdigit()]
+            if len(nums) >= 2:
+                a, b = nums[0], nums[1]
+                if a <= 12 and b >= 2000: return a, b
+                if b <= 12 and a >= 2000: return b, a
+    return (None, None)
 
-    if df is None and csv_fp.exists():
-        df = pd.read_csv(csv_fp, low_memory=False)
-        src = "csv"
-        print(f"[read] {csv_fp.name} (CSV) rows={len(df):,} cols={df.shape[1]}")
-
-    if df is None:
-        print(f"[warn] {year}: no SAS or CSV file found; skipping")
-        return pd.DataFrame(columns=[
-            "cms_certification_number","FY_BGN_DT","FY_END_DT",
-            "MRC_OWNERSHIP_RAW","S3_1_PATDAYS_TOTAL","S3_1_PATDAYS_MEDICARE","S3_1_PATDAYS_MEDICAID",
-            "STATE_RAW","URBAN_RAW","BED_DAYS_RAW","AVG_BEDS_RAW","INPT_BEDS_RAW","HOME_OFFICE_RAW","_src","file_year"
-        ])
-
+def std_month(df: pd.DataFrame, yyyy: int|None, mm: int|None) -> pd.DataFrame:
+    df = norm_cols(df)
     cols = list(df.columns)
-    # Required-ish
-    prv_col = pick(cols, "PRVDR_NUM","prvdr_num","Provider Number")
-    bgn_col = pick(cols, "FY_BGN_DT","fy_bgn_dt","Cost Report Fiscal Year beginning date")
-    end_col = pick(cols, "FY_END_DT","fy_end_dt","Cost Report Fiscal Year ending date")
-    own_col = pick(cols, "MRC_OWNERSHIP","MRC_ownership","mrc_ownership","MRC_ownership_code")
-    tot_col = pick(cols, "S3_1_PATDAYS_TOTAL")
-    mcr_col = pick(cols, "S3_1_PATDAYS_MEDICARE")
-    mcd_col = pick(cols, "S3_1_PATDAYS_MEDICAID")
 
-    # Optional extras
-    st_col   = pick(cols, *EXTRA_CANDS["state"])
-    urb_col  = pick(cols, *EXTRA_CANDS["urban"])
-    bd_col   = pick(cols, *EXTRA_CANDS["bed_days"])
-    ab_col   = pick(cols, *EXTRA_CANDS["avg_beds"])
-    ip_col   = pick(cols, *EXTRA_CANDS["inpt_beds"])
+    # Map essentials
+    ccn_col = pick(cols, PRIMARY_CCN_ORDER)
+    if not ccn_col:
+        return pd.DataFrame()
 
-    # Home office / chain
-    ho_col = None
-    for c in HOME_OFFICE_CANDIDATES:
-        hit = pick(cols, c)
-        if hit is not None:
-            ho_col = hit
-            break
-    if ho_col is None:
-        ho_like = [c for c in cols if ("HOME" in c.upper() and "OFFICE" in c.upper())]
-        if len(ho_like) == 1:
-            ho_col = ho_like[0]
-        elif len(ho_like) > 1:
-            nunique_sorted = sorted(
-                [(c, df[c].dropna().nunique()) for c in ho_like],
-                key=lambda x: x[1]
-            )
-            ho_col = nunique_sorted[0][0] if nunique_sorted else None
+    month_col = pick(cols, MONTH_CANDS)
+    ccrc_col  = pick(cols, CCRC_CANDS)
+    sff_col   = pick(cols, SFF_CANDS)
+    cm_col    = pick(cols, CM_TOTAL_CANDS)
 
-    keep_map = {
-        "PRVDR_NUM": prv_col,
-        "FY_BGN_DT": bgn_col,
-        "FY_END_DT": end_col,
-        "MRC_OWNERSHIP_RAW": own_col,
-        "S3_1_PATDAYS_TOTAL": tot_col,
-        "S3_1_PATDAYS_MEDICARE": mcr_col,
-        "S3_1_PATDAYS_MEDICAID": mcd_col,
-        "STATE_RAW": st_col,
-        "URBAN_RAW": urb_col,
-        "BED_DAYS_RAW": bd_col,
-        "AVG_BEDS_RAW": ab_col,
-        "INPT_BEDS_RAW": ip_col,
-        "HOME_OFFICE_RAW": ho_col,
-    }
-    # Ensure presence
-    for k, v in keep_map.items():
-        if v is None:
-            keep_map[k] = k
-            df[k] = pd.NA
+    out = pd.DataFrame({
+        "cms_certification_number": normalize_ccn_any(df[ccn_col]),
+        "date": pd.NaT
+    })
+    if month_col:
+        out["date"] = to_month(df[month_col])
+    if out["date"].isna().all() and (yyyy and mm):
+        out["date"] = pd.Timestamp(year=int(yyyy), month=int(mm), day=1)
 
-    sub = df[[keep_map[k] for k in keep_map]].copy()
-    sub.columns = list(keep_map.keys())
-    sub["file_year"] = year
-    sub["_src"] = src
-    return sub
-
-# ---------------- Load all years ----------------
-years = sorted({int(p.stem[-4:]) for p in MCR_DIR.glob("mcr_flatfile_20??.*")})
-if not years:
-    raise FileNotFoundError(f"No MCR files found in {MCR_DIR}")
-
-parts = [load_single_year(y) for y in years]
-raw = pd.concat(parts, ignore_index=True)
-print(f"[stack] combined rows={len(raw):,} cols={raw.shape[1]}")
-
-# ---------------- Clean & types ----------------
-raw["cms_certification_number"] = normalize_ccn_any(raw["PRVDR_NUM"])
-raw["FY_BGN_DT"] = pd.to_datetime(raw["FY_BGN_DT"], errors="coerce")
-raw["FY_END_DT"] = pd.to_datetime(raw["FY_END_DT"], errors="coerce")
-
-for c in ["S3_1_PATDAYS_TOTAL","S3_1_PATDAYS_MEDICARE","S3_1_PATDAYS_MEDICAID",
-          "BED_DAYS_RAW","AVG_BEDS_RAW","INPT_BEDS_RAW"]:
-    raw[c] = pd.to_numeric(raw[c], errors="coerce")
-
-raw["state"] = raw["STATE_RAW"].apply(coerce_state)
-raw["urban_rural"] = raw["URBAN_RAW"].apply(coerce_urban_rural)
-
-# Ownership collapse
-raw["ownership_type"] = raw["MRC_OWNERSHIP_RAW"].apply(collapse_ownership_code)
-
-# Chain dummy from home-office field
-raw["is_chain"] = raw["HOME_OFFICE_RAW"].apply(to_chain_flag).astype("Int8")
-
-# Quick ownership sanity
-code_counts = (
-    raw["MRC_OWNERSHIP_RAW"].astype("string").str.strip().replace({"": pd.NA}).value_counts(dropna=False).head(20)
-)
-print("\n=== Raw ownership code counts (top 20) ===")
-print(code_counts)
-
-# ---------------- Compute beds & occupancy on the annual row ----------------
-period_days = (raw["FY_END_DT"] - raw["FY_BGN_DT"]).dt.days.add(1)
-period_days = period_days.where(period_days > 0, np.nan)
-
-# Number of beds (avg): prefer AVG_BEDS_RAW; else derive from bed-days / period_days
-raw["num_beds"] = raw["AVG_BEDS_RAW"]
-need_fill = raw["num_beds"].isna() & raw["BED_DAYS_RAW"].notna() & period_days.notna() & (period_days > 0)
-raw.loc[need_fill, "num_beds"] = raw.loc[need_fill, "BED_DAYS_RAW"] / period_days.loc[need_fill]
-
-# Occupancy rate (%) = total patient days / (num_beds * period_days) * 100
-den = raw["num_beds"] * period_days
-raw["occupancy_rate"] = np.where(
-    den.notna() & (den > 0) & raw["S3_1_PATDAYS_TOTAL"].notna(),
-    (raw["S3_1_PATDAYS_TOTAL"] / den) * 100.0,
-    np.nan
-)
-raw["occupancy_rate"] = raw["occupancy_rate"].clip(lower=0, upper=100)
-
-# Pay mix (patient-day shares)
-def _share(numer, denom):
-    return np.where(
-        denom.notna() & (denom > 0) & numer.notna(),
-        (numer / denom) * 100.0,
-        np.nan
+    # Variables
+    out["ccrc_facil"] = (
+        to_yes_no_flag(df[ccrc_col]).map({"YES":1, "NO":0}).astype("Int8")
+        if ccrc_col else pd.NA
     )
-raw["pct_medicare"] = _share(raw["S3_1_PATDAYS_MEDICARE"], raw["S3_1_PATDAYS_TOTAL"])
-raw["pct_medicaid"] = _share(raw["S3_1_PATDAYS_MEDICAID"], raw["S3_1_PATDAYS_TOTAL"])
 
-# ---------------- Expand to monthly ----------------
-rows = []
-need = raw.dropna(subset=["cms_certification_number","FY_BGN_DT","FY_END_DT"])
-for _, r in need.iterrows():
-    months = month_range_df(r["FY_BGN_DT"], r["FY_END_DT"])
-    if months.empty:
-        continue
+    if sff_col:
+        raw = df[sff_col].astype("string").str.strip()
+        up  = raw.str.upper()
+        sff_norm = pd.Series(pd.NA, index=raw.index, dtype="object")
+        # If a booleanish “SFF” column → map YES/NO
+        # If a label column (NONE/CANDIDATE/SFF) → preserve (and normalize case)
+        sff_norm = sff_norm.mask(up.isin({"SFF","YES","Y","1"}), "SFF")
+        sff_norm = sff_norm.mask(up.isin({"CANDIDATE","CAND","POTENTIAL"}), "CANDIDATE")
+        sff_norm = sff_norm.mask(up.isin({"NONE","NO","N","0"}), "NONE")
+        # If still NA, pass through original (for any unexpected label)
+        out["sff_status_full"] = sff_norm.fillna(raw).replace({"": pd.NA})
+    else:
+        out["sff_status_full"] = pd.NA
 
-    block = months.copy()
-    block["cms_certification_number"] = r["cms_certification_number"]
-    block["ownership_type"] = r["ownership_type"]
-    block["pct_medicare"] = r["pct_medicare"]
-    block["pct_medicaid"] = r["pct_medicaid"]
-    block["num_beds"] = r["num_beds"]
-    block["occupancy_rate"] = r["occupancy_rate"]
-    block["state"] = r["state"]
-    block["urban_rural"] = r["urban_rural"]
-    block["is_chain"] = r["is_chain"]
-    rows.append(block)
+    out["cm_total"] = pd.to_numeric(df[cm_col], errors="coerce") if cm_col else pd.NA
 
-monthly = (pd.concat(rows, ignore_index=True)
-           if rows else pd.DataFrame(columns=[
-               "cms_certification_number","month_start","ownership_type","pct_medicare","pct_medicaid",
-               "num_beds","occupancy_rate","state","urban_rural","is_chain"
-           ]))
+    # Final hygiene
+    out = out.dropna(subset=["cms_certification_number"])
+    if out["date"].isna().all():
+        return pd.DataFrame()
+    out["date"] = to_month(out["date"])
+    out = out.dropna(subset=["date"])
+    out["year"]  = out["date"].dt.year.astype("Int64")
+    out["month"] = out["date"].dt.month.astype("Int64")
+    return out.sort_values(["cms_certification_number","date"]).reset_index(drop=True)
 
-# Deduplicate overlapping months within CCN:
-#  - ownership_type: prefer earliest non-null (mode-ish choice is possible, earliest is fine)
-#  - pct_medicare/pct_medicaid/num_beds/occupancy_rate: mean across overlaps
-#  - state: first non-null
-#  - urban_rural: first non-null
-#  - is_chain: max (if any report says chain, mark 1)
-monthly = monthly.sort_values(["cms_certification_number","month_start"])
-monthly = (monthly
-           .groupby(["cms_certification_number","month_start"], as_index=False)
-           .agg({
-               "ownership_type": lambda s: s.dropna().iloc[0] if s.dropna().size else pd.NA,
-               "pct_medicare": "mean",
-               "pct_medicaid": "mean",
-               "num_beds": "mean",
-               "occupancy_rate": "mean",
-               "state": lambda s: s.dropna().iloc[0] if s.dropna().size else pd.NA,
-               "urban_rural": lambda s: s.dropna().iloc[0] if s.dropna().size else pd.NA,
-               "is_chain": "max",
-           }))
-monthly["is_chain"] = monthly["is_chain"].fillna(0).astype("Int8")
+# -------------------- Ingest yearly zips → monthly zips --------------------
+yearly_zips = sorted([p for p in NH_ZIP_DIR.glob("*.zip") if p.is_file()])
+if not yearly_zips:
+    print("[scan] no yearly zips found in the folder you specified.")
+    # Early save (empty) so you can see the file exists
+    pd.DataFrame(columns=["cms_certification_number","date","ccrc_facil","sff_status_full","cm_total","year","month"]).to_csv(OUT_FP, index=False)
+else:
+    print(f"[scan] found {len(yearly_zips)} yearly zip(s)")
+    frames = []
+    month_files_seen = 0
 
-# ---------------- Report & save ----------------
-print(f"\n[result] monthly control rows={len(monthly):,}  CCNs={monthly['cms_certification_number'].nunique():,}")
+    for yzip in yearly_zips:
+        with zipfile.ZipFile(yzip, "r") as yz:
+            inner_zips = [n for n in yz.namelist() if n.lower().endswith(".zip")]
+            if not inner_zips:
+                print(f"  [warn] {yzip.name} has no inner monthly zips")
+                continue
+            for inner in inner_zips:
+                mm, yyyy = parse_mm_yyyy_from_name(Path(inner).name)
+                with yz.open(inner) as inner_bytes:
+                    try:
+                        with zipfile.ZipFile(BytesIO(inner_bytes.read()), "r") as mz:
+                            entries = mz.namelist()
+                            # Prefer files with "providerinfo" in name; else any CSV/TXT
+                            chosen = None
+                            for e in entries:
+                                nm = Path(e).name.lower()
+                                if ("providerinfo" in nm) and re.search(r"\.(csv|txt)$", nm, re.I):
+                                    chosen = e; break
+                            if not chosen:
+                                cands = [e for e in entries if re.search(r"\.(csv|txt)$", e, re.I)]
+                                chosen = cands[0] if cands else None
+                            if not chosen:
+                                continue
+                            raw = mz.read(chosen)
+                            df  = safe_read_csv(raw)
+                            std = std_month(df, yyyy, mm)
+                            if not std.empty:
+                                frames.append(std)
+                                month_files_seen += 1
+                    except zipfile.BadZipFile:
+                        continue
 
-print("\n=== ownership_type distribution ===")
-print(monthly["ownership_type"].value_counts(dropna=False))
+    panel = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if not panel.empty:
+        panel = panel.drop_duplicates(["cms_certification_number","date"]).reset_index(drop=True)
 
-has_any_pay = ((monthly["pct_medicare"].notna()) | (monthly["pct_medicaid"].notna())).mean()
-print("\n% rows with at least one payer % populated:", round(100*has_any_pay, 1), "%")
+    print(f"[ingested] month-files={month_files_seen} rows={len(panel):,} "
+          f"CCNs={panel['cms_certification_number'].nunique() if not panel.empty else 0:,}")
 
-print("\n=== urban_rural distribution (non-null) ===")
-print(monthly.loc[monthly["urban_rural"].notna(), "urban_rural"].value_counts())
+    # -------------------- Save + quick diagnostics --------------------
+    panel.to_csv(OUT_FP, index=False)
+    print(f"[save] {OUT_FP}  rows={len(panel):,}")
 
-print("\n=== state sample (top 10) ===")
-print(monthly["state"].value_counts(dropna=True).head(10))
+    if panel.empty:
+        print("[warn] panel is empty. Two common causes:")
+        print("  1) provider CSV inside monthly zips is named differently — print(mz.namelist()) to check")
+        print("  2) CCN header variant not matched — print(df.columns[:50]) for a month to add an alias")
+    else:
+        panel["year"] = panel["date"].dt.year
+        print("\n=== Missingness by year (non-null counts) ===")
+        miss = (panel.assign(
+                    cm_total_n=panel["cm_total"].notna().astype(int),
+                    ccrc_n    =panel["ccrc_facil"].notna().astype(int),
+                    sff_n     =panel["sff_status_full"].notna().astype(int))
+                .groupby("year")[["cm_total_n","ccrc_n","sff_n"]].sum().astype(int))
+        print(miss)
 
-print("\n=== is_chain distribution ===")
-print(monthly["is_chain"].value_counts().rename({0:"No (0)",1:"Yes (1)"}))
+        if panel["ccrc_facil"].notna().any():
+            ccrc_share = (panel.dropna(subset=["ccrc_facil"])
+                               .groupby("year")["ccrc_facil"].mean().mul(100).round(1))
+            print("\n=== CCRC share by year (among non-null, %) ===")
+            print(ccrc_share)
 
-monthly.to_csv(OUT_FP, index=False)
-print(f"[saved] {OUT_FP}")
+        if panel["sff_status_full"].notna().any():
+            sff_tab = (panel.dropna(subset=["sff_status_full"])
+                             .groupby(["year","sff_status_full"]).size()
+                             .groupby(level=0).apply(lambda s: (s/s.sum()*100))
+                             .unstack(fill_value=0)
+                             .reindex(columns=[c for c in ["NONE","CANDIDATE","SFF"]
+                                               if c in panel["sff_status_full"].dropna().unique()])
+                             .round(1))
+            print("\n=== SFF status % by year ===")
+            print(sff_tab)
+
+        if panel["cm_total"].notna().any():
+            cm = (panel.groupby("year")["cm_total"]
+                        .agg(count="count", mean="mean", std="std",
+                             min="min", q10=lambda s: s.quantile(.10),
+                             q25=lambda s: s.quantile(.25), q50="median",
+                             q75=lambda s: s.quantile(.75), q90=lambda s: s.quantile(.90), max="max")
+                        .round(2))
+            print("\n=== CM_TOTAL summary by year ===")
+            print(cm)
