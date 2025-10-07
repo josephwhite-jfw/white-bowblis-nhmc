@@ -2,19 +2,20 @@
 # coding: utf-8
 # ─────────────────────────────────────────────────────────────────────────────
 # Medicare Cost Reports (MCR) CHOW builder + agreement vs. Ownership CHOW-lite
-#   * Reads RAW_DIR/medicare-cost-reports/mcr_flatfile_20??.csv (3 cols only)
+#   * Reads RAW_DIR/medicare-cost-reports/mcr_flatfile_20??.(csv|sas7bdat|xpt)
+#     (3 columns only: PRVDR_NUM, S2_2_CHOW, S2_2_CHOWDATE)
 #   * CCN normalization: alphanumeric-safe (pad only if purely digits)
 #   * Removes in-hospital CCNs via provider_resides_in_hospital_by_ccn.csv
 #   * Flags MCR CHOWs **only** if CHOW date >= 2017-01-01 (OWN-aligned window)
 #   * Outputs:
-#       - data/interim/mcr_chow_events_long.csv                (all dated events, audit)
-#       - data/interim/mcr_chow_provider_events_all.csv        (per-CCN CHOW counts+dates, POST-2017 only)
-#       - data/interim/mcr_chow_provider_events_with_windows.csv (diagnostics: pre/post lists per CCN)
-#       - data/interim/chow_agreement_tables.xlsx              (Overview, buckets, Crosstab, Discrepancies)
-#       - data/interim/chow_facility_comparison_plus.csv       (rich per-CCN comparison)
-#       - data/interim/chow_facility_comparison_1v1.csv        (subset: exactly 1 vs 1)
-#       - data/interim/chow_facility_mismatches.csv            (subset: disagreements)
-#   * Compares against: data/interim/ccn_chow_lite.csv         (your ownership CHOW-lite)
+#       - data/interim/mcr_chow_events_long.csv
+#       - data/interim/mcr_chow_provider_events_all.csv
+#       - data/interim/mcr_chow_provider_events_with_windows.csv
+#       - data/interim/chow_agreement_tables.xlsx
+#       - data/interim/chow_facility_comparison_plus.csv
+#       - data/interim/chow_facility_comparison_1v1.csv
+#       - data/interim/chow_facility_mismatches.csv
+#   * Compares against: data/interim/ccn_chow_lite.csv (your CHOW-lite)
 # Run with: %run 05_build_mcr_chow_and_compare.py
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -25,6 +26,13 @@ import numpy as np
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# Try pyreadstat for efficient SAS reads (usecols)
+try:
+    import pyreadstat
+    HAS_PYREADSTAT = True
+except Exception:
+    HAS_PYREADSTAT = False
+
 # ---------------- Paths ----------------
 PROJECT_ROOT = Path.cwd()
 while not (PROJECT_ROOT / "src").is_dir() and PROJECT_ROOT != PROJECT_ROOT.parent:
@@ -32,7 +40,12 @@ while not (PROJECT_ROOT / "src").is_dir() and PROJECT_ROOT != PROJECT_ROOT.paren
 
 RAW_DIR = Path(os.getenv("NH_DATA_DIR", PROJECT_ROOT / "data" / "raw")).resolve()
 MCR_DIR = RAW_DIR / "medicare-cost-reports"
-MCR_GLOB = "mcr_flatfile_20??.csv"
+MCR_PATTERNS = [
+    "mcr_flatfile_20??.csv",
+    "mcr_flatfile_20??.sas7bdat",
+    "mcr_flatfile_20??.xpt",
+    "mcr_flatfile_20??.XPT",
+]
 
 PROV_DIR = RAW_DIR / "provider-info-files"
 HOSP_BY_CCN = PROV_DIR / "provider_resides_in_hospital_by_ccn.csv"  # CCN-level flag
@@ -40,12 +53,11 @@ HOSP_BY_CCN = PROV_DIR / "provider_resides_in_hospital_by_ccn.csv"  # CCN-level 
 INTERIM_DIR = PROJECT_ROOT / "data" / "interim"
 INTERIM_DIR.mkdir(parents=True, exist_ok=True)
 
-OUT_EVENTS_LONG   = INTERIM_DIR / "mcr_chow_events_long.csv"                  # all dated events (audit)
-OUT_PROVIDER_ALL  = INTERIM_DIR / "mcr_chow_provider_events_all.csv"          # POST-2017 only (flagged)
-OUT_PROVIDER_DIAG = INTERIM_DIR / "mcr_chow_provider_events_with_windows.csv" # diagnostics: pre/post lists
+OUT_EVENTS_LONG   = INTERIM_DIR / "mcr_chow_events_long.csv"
+OUT_PROVIDER_ALL  = INTERIM_DIR / "mcr_chow_provider_events_all.csv"
+OUT_PROVIDER_DIAG = INTERIM_DIR / "mcr_chow_provider_events_with_windows.csv"
 OUT_XLSX          = INTERIM_DIR / "chow_agreement_tables.xlsx"
 
-# Rich comparison outputs
 PLUS_FP    = INTERIM_DIR / "chow_facility_comparison_plus.csv"
 ONEVONE_FP = INTERIM_DIR / "chow_facility_comparison_1v1.csv"
 MIS_FP     = INTERIM_DIR / "chow_facility_mismatches.csv"
@@ -75,7 +87,22 @@ def normalize_ccn_any(series: pd.Series) -> pd.Series:
     s = s.replace({"": pd.NA})
     return s
 
-# ------------- Reader (robust & simple) -------------
+# ---------------- Helpers: SAS date coercion ----------------
+def coerce_maybe_sas_date(s: pd.Series) -> pd.Series:
+    """
+    Convert S2_2_CHOWDATE from SAS numeric (days since 1960-01-01)
+    or from strings to pandas datetime.
+    """
+    if pd.api.types.is_datetime64_any_dtype(s):
+        return s
+    num = pd.to_numeric(s, errors="coerce")
+    has_num = num.notna().sum()
+    if has_num and has_num >= max(1, int(0.5 * s.notna().sum())):
+        base = pd.Timestamp("1960-01-01")
+        return (base + pd.to_timedelta(num, unit="D")).astype("datetime64[ns]")
+    return pd.to_datetime(s.astype("string").str.strip(), errors="coerce")
+
+# ------------- Reader (CSV) -------------
 _TRY_SEPS = [",", "|", "\t", ";", "~"]
 _TRY_ENCODINGS = ["utf-8","utf-8-sig","cp1252","latin1"]
 TARGET_UP = {"PRVDR_NUM","S2_2_CHOW","S2_2_CHOWDATE"}
@@ -95,23 +122,132 @@ def _sniff_sep_enc(fp: Path):
 def _usecols_ci(colname: str) -> bool:
     return str(colname).upper().strip() in TARGET_UP
 
-def _read_three_raw(fp: Path) -> pd.DataFrame:
+def _select_three(df: pd.DataFrame, log_name: str) -> pd.DataFrame:
+    """Case-insensitive select of 3 target columns; add missing as NA; return with canonical UPPERCASE names."""
+    upmap = {c: c.upper().strip() for c in df.columns}
+    rev = {v: k for k, v in upmap.items()}
+    cols_present = {c for c in upmap.values()}
+    need = list(TARGET_UP)
+    have = [rev[c] for c in need if c in cols_present]
+    out = df[have].copy()
+    for t in need:
+        if t not in cols_present:
+            out[t] = pd.NA
+    # rename to canonical uppercase
+    rename_map = {}
+    if "PRVDR_NUM" in cols_present: rename_map[rev["PRVDR_NUM"]] = "PRVDR_NUM"
+    if "S2_2_CHOW" in cols_present: rename_map[rev["S2_2_CHOW"]] = "S2_2_CHOW"
+    if "S2_2_CHOWDATE" in cols_present: rename_map[rev["S2_2_CHOWDATE"]] = "S2_2_CHOWDATE"
+    out = out.rename(columns=rename_map)
+    # Ensure column order
+    for col in ["PRVDR_NUM","S2_2_CHOW","S2_2_CHOWDATE"]:
+        if col not in out.columns:
+            out[col] = pd.NA
+    out = out[["PRVDR_NUM","S2_2_CHOW","S2_2_CHOWDATE"]]
+    print(f"[select] {log_name} -> using columns {list(out.columns)}")
+    return out
+
+def _read_three_csv(fp: Path) -> pd.DataFrame:
     sep, enc = _sniff_sep_enc(fp)
     engine = None if sep == "," else "python"  # C engine for comma csv
-    df = pd.read_csv(fp, sep=sep, encoding=enc, engine=engine,
-                     usecols=_usecols_ci, dtype=str)
-    print(f"[read] {fp.name} sep='{sep}' enc={enc} -> cols={list(df.columns)} rows={len(df):,}")
-    return df
+    df = pd.read_csv(fp, sep=sep, encoding=enc, engine=engine, dtype=str)
+    print(f"[read:csv] {fp.name} sep='{sep}' enc={enc} cols={len(df.columns)} rows={len(df):,}")
+    return _select_three(df, fp.name)
+
+# ------------- Reader (SAS) with case-insensitive usecols resolution -------------
+SAS_TARGETS = {
+    "PRVDR_NUM":     ["prvdr_num", "provider_number", "provnum", "prvdrnum"],
+    "S2_2_CHOW":     ["s2_2_chow", "s22_chow", "chow", "s2_2_chow_cd", "s2_2_chow_flag", "s2_2_chow_ind"],
+    "S2_2_CHOWDATE": ["s2_2_chowdate", "s2_2_chow_date", "s22_chow_date", "chow_date"],
+}
+
+def _sas_resolve_usecols(fp: Path, ext: str):
+    """
+    Return mapping {TARGET_NAME -> actual_name_in_file} using pyreadstat metadata.
+    Falls back to pandas.read_sas to inspect columns. Includes simple heuristics.
+    """
+    # Try pyreadstat metadata first (fast & no data read)
+    avail = None
+    if HAS_PYREADSTAT:
+        try:
+            if ext == ".sas7bdat":
+                _, meta = pyreadstat.read_sas7bdat(fp, metadataonly=True)
+            else:
+                _, meta = pyreadstat.read_xport(fp, metadataonly=True)
+            avail = list(meta.column_names)
+        except Exception:
+            avail = None
+    if avail is None:
+        # Fallback: read minimally with pandas to inspect columns
+        fmt = "sas7bdat" if ext == ".sas7bdat" else "xport"
+        df_probe = pd.read_sas(fp, format=fmt, encoding="latin1")
+        avail = list(df_probe.columns)
+
+    avail_map = {c.lower().strip(): c for c in avail}
+    actual = {}
+    for tgt, cands in SAS_TARGETS.items():
+        found = next((avail_map[c] for c in cands if c in avail_map), None)
+        # heuristic fallbacks
+        if not found and tgt == "S2_2_CHOWDATE":
+            found = next((c for k,c in avail_map.items() if "chow" in k and "date" in k), None)
+        if not found and tgt == "S2_2_CHOW":
+            found = next((c for k,c in avail_map.items() if "chow" in k and "date" not in k), None)
+        if not found and tgt == "PRVDR_NUM":
+            found = next((c for k,c in avail_map.items() if "prvdr" in k or "prov" in k), None)
+        if found:
+            actual[tgt] = found
+    return actual
+
+def _read_three_sas(fp: Path) -> pd.DataFrame:
+    ext = fp.suffix.lower()
+    # Prefer pyreadstat with correctly-cased usecols
+    if HAS_PYREADSTAT:
+        try:
+            mapping = _sas_resolve_usecols(fp, ext)  # {TARGET -> actual}
+            usecols_actual = list(mapping.values())
+            if not usecols_actual:
+                raise RuntimeError("Could not resolve SAS usecols (no matches)")
+
+            if ext == ".sas7bdat":
+                df, _ = pyreadstat.read_sas7bdat(fp, usecols=usecols_actual)
+            else:
+                df, _ = pyreadstat.read_xport(fp, usecols=usecols_actual)
+
+            # Rename back to canonical targets so downstream stays simple
+            inv = {v: k for k, v in mapping.items()}
+            df = df.rename(columns=inv)
+            print(f"[read:sas:pyreadstat] {fp.name} mapped usecols={mapping} rows={len(df):,}")
+            return _select_three(df, fp.name)
+        except Exception as e:
+            print(f"[warn] pyreadstat path failed for {fp.name}: {e} — falling back to pandas.read_sas")
+
+    # Fallback: pandas.read_sas then case-insensitive select
+    fmt = "sas7bdat" if ext == ".sas7bdat" else "xport"
+    df = pd.read_sas(fp, format=fmt, encoding="latin1")
+    print(f"[read:sas:pandas] {fp.name} format={fmt} cols={len(df.columns)} rows={len(df):,}")
+    return _select_three(df, fp.name)
 
 # ------------- Load & Stack (raw) -------------
-files = sorted(MCR_DIR.glob(MCR_GLOB))
+files = []
+seen = set()
+for pat in MCR_PATTERNS:
+    for f in sorted(MCR_DIR.glob(pat)):
+        if f not in seen:
+            files.append(f)
+            seen.add(f)
+
 if not files:
-    raise FileNotFoundError(f"No files matched {MCR_DIR / MCR_GLOB}")
+    raise FileNotFoundError(f"No files matched {MCR_DIR} with patterns: {MCR_PATTERNS}")
 
 frames = []
 for fp in files:
     try:
-        frames.append(_read_three_raw(fp))
+        if fp.suffix.lower() == ".csv":
+            frames.append(_read_three_csv(fp))
+        elif fp.suffix.lower() in {".sas7bdat",".xpt"}:
+            frames.append(_read_three_sas(fp))
+        else:
+            print(f"[skip] {fp.name} (unsupported extension)")
     except Exception as e:
         print(f"[warn] {fp.name}: {e}")
 
@@ -122,10 +258,9 @@ print("[stack] non-null counts:\n", mcr_raw.notna().sum())
 # ------------- Normalize -------------
 mcr = mcr_raw.rename(columns={c: c.upper().strip() for c in mcr_raw.columns})
 mcr["PRVDR_NUM"] = normalize_ccn_any(mcr["PRVDR_NUM"])
-mcr["S2_2_CHOWDATE"] = pd.to_datetime(
-    mcr["S2_2_CHOWDATE"].astype("string").str.strip(),
-    errors="coerce"
-)
+
+# CHOWDATE: support SAS numeric days, strings, or already-datetime
+mcr["S2_2_CHOWDATE"] = coerce_maybe_sas_date(mcr["S2_2_CHOWDATE"])
 
 # ------------- Remove in-hospital CCNs (by CCN) -------------
 if HOSP_BY_CCN.exists():
@@ -176,7 +311,6 @@ events_all.to_csv(OUT_EVENTS_LONG, index=False)
 print(f"[saved] events-long -> {OUT_EVENTS_LONG}  rows={len(events_all):,}  providers={events_all['cms_certification_number'].nunique() if not events_all.empty else 0:,}")
 
 # ---------- Enforce OWN-aligned window for MCR CHOWs ----------
-# Keep events that occur on/after 2017-01-01 for counting/flagging
 events_post = events_all.loc[events_all["event_month"] >= CUTOFF_DATE].copy() if not events_all.empty else events_all
 
 # ---------- Wide per-provider table (POST-2017 only) ----------
@@ -368,7 +502,7 @@ else:
         discrepancies.to_excel(xw, sheet_name="Discrepancies", index=False)
 
         if engine == "xlsxwriter":
-            for name, df in {
+            for name, df_ in {
                 "Overview": overview,
                 "Buckets_OWN_base": own_bucket,
                 "Buckets_MCR_base": mcr_bucket,
@@ -376,12 +510,12 @@ else:
                 "Discrepancies": discrepancies
             }.items():
                 ws = xw.sheets[name]
-                for i, w in enumerate(compute_col_widths(df)):
+                for i, w in enumerate(compute_col_widths(df_)):
                     ws.set_column(i, i, w)
         else:
             from openpyxl.utils import get_column_letter
             wb = xw.book
-            for name, df in {
+            for name, df_ in {
                 "Overview": overview,
                 "Buckets_OWN_base": own_bucket,
                 "Buckets_MCR_base": mcr_bucket,
@@ -389,85 +523,85 @@ else:
                 "Discrepancies": discrepancies
             }.items():
                 ws = wb[name]
-                for i, w in enumerate(compute_col_widths(df), start=1):
+                for i, w in enumerate(compute_col_widths(df_), start=1):
                     ws.column_dimensions[get_column_letter(i)].width = w
 
     print(f"\n[saved] Excel -> {OUT_XLSX}")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Rich comparison datasets (PLUS, 1v1, mismatches)
-    # ─────────────────────────────────────────────────────────────────────────
-    def collapse_dates_from_cols(df, date_cols, fmt="%Y-%m-%d", month_only=True):
-        if not date_cols:
-            return pd.Series([""] * len(df), index=df.index, dtype="string")
-        dt = df[date_cols].apply(pd.to_datetime, errors="coerce")
-        if month_only:
-            dt = dt.apply(lambda col: col.dt.to_period("M").dt.to_timestamp())
-            out = dt.apply(
-                lambda r: "|".join(sorted({d.strftime("%Y-%m") for d in r if pd.notna(d)})),
-                axis=1
-            )
-        else:
-            out = dt.apply(
-                lambda r: "|".join(sorted({d.strftime(fmt) for d in r if pd.notna(d)})),
-                axis=1
-            )
-        return out.astype("string")
+# ─────────────────────────────────────────────────────────────────────────
+# Rich comparison datasets (PLUS, 1v1, mismatches)
+# ─────────────────────────────────────────────────────────────────────────
+def collapse_dates_from_cols(df, date_cols, fmt="%Y-%m-%d", month_only=True):
+    if not date_cols:
+        return pd.Series([""] * len(df), index=df.index, dtype="string")
+    dt = df[date_cols].apply(pd.to_datetime, errors="coerce")
+    if month_only:
+        dt = dt.apply(lambda col: col.dt.to_period("M").dt.to_timestamp())
+        out = dt.apply(
+            lambda r: "|".join(sorted({d.strftime("%Y-%m") for d in r if pd.notna(d)})),
+            axis=1
+        )
+    else:
+        out = dt.apply(
+            lambda r: "|".join(sorted({d.strftime(fmt) for d in r if pd.notna(d)})),
+            axis=1
+        )
+    return out.astype("string")
 
-    def first_date_str(s):
-        if not isinstance(s, str) or not s:
-            return ""
-        return s.split("|")[0]
+def first_date_str(s):
+    if not isinstance(s, str) or not s:
+        return ""
+    return s.split("|")[0]
 
-    def last_date_str(s):
-        if not isinstance(s, str) or not s:
-            return ""
-        return s.split("|")[-1]
+def last_date_str(s):
+    if not isinstance(s, str) or not s:
+        return ""
+    return s.split("|")[-1]
 
-    def month_diff(a, b):
-        if not a or not b:
-            return np.nan
-        A = pd.Period(a, freq="M")
-        B = pd.Period(b, freq="M")
-        return (A - B).n
+def month_diff(a, b):
+    if not a or not b:
+        return np.nan
+    A = pd.Period(a, freq="M")
+    B = pd.Period(b, freq="M")
+    return (A - B).n
 
-    def count_exact_overlap(a, b):
-        A = set(a.split("|")) if isinstance(a, str) and a else set()
-        B = set(b.split("|")) if isinstance(b, str) and b else set()
-        return len(A & B)
+def count_exact_overlap(a, b):
+    A = set(a.split("|")) if isinstance(a, str) and a else set()
+    B = set(b.split("|")) if isinstance(b, str) and b else set()
+    return len(A & B)
 
-    def count_within_one_month(a, b):
-        A = [x for x in (a.split("|") if isinstance(a, str) and a else [])]
-        B = [y for y in (b.split("|") if isinstance(b, str) and b else [])]
-        if not A or not B:
-            return 0
-        cnt = 0
-        for x in A:
-            for y in B:
-                try:
-                    if abs(month_diff(x, y)) <= 1:
-                        cnt += 1
-                        break
-                except Exception:
-                    pass
-        return cnt
+def count_within_one_month(a, b):
+    A = [x for x in (a.split("|") if isinstance(a, str) and a else [])]
+    B = [y for y in (b.split("|") if isinstance(b, str) and b else [])]
+    if not A or not B:
+        return 0
+    cnt = 0
+    for x in A:
+        for y in B:
+            try:
+                if abs(month_diff(x, y)) <= 1:
+                    cnt += 1
+                    break
+            except Exception:
+                pass
+    return cnt
 
-    def jaccard_months(a, b):
-        A = set(a.split("|")) if isinstance(a, str) and a else set()
-        B = set(b.split("|")) if isinstance(b, str) and b else set()
-        if not A and not B:
-            return np.nan
-        return len(A & B) / max(1, len(A | B))
+def jaccard_months(a, b):
+    A = set(a.split("|")) if isinstance(a, str) and a else set()
+    B = set(b.split("|")) if isinstance(b, str) and b else set()
+    if not A and not B:
+        return np.nan
+    return len(A & B) / max(1, len(A | B))
 
-    def set_minus(a, b):
-        A = set(a.split("|")) if isinstance(a, str) and a else set()
-        B = set(b.split("|")) if isinstance(b, str) and b else set()
-        return "|".join(sorted(A - B))
+def set_minus(a, b):
+    A = set(a.split("|")) if isinstance(a, str) and a else set()
+    B = set(b.split("|")) if isinstance(b, str) and b else set()
+    return "|".join(sorted(A - B))
 
-    # Prepare compact frames
-    lite = own.copy()
-    mcrw = provider_wide.copy()
-
+lite_path_ok = OWN_LITE.exists()
+mcrw = provider_wide.copy()
+if lite_path_ok:
+    lite = pd.read_csv(OWN_LITE, dtype={"cms_certification_number":"string"})
     lite_date_cols = [c for c in lite.columns if re.fullmatch(r"chow_date_\d+", c)]
     mcr_date_cols  = [c for c in mcrw.columns  if re.fullmatch(r"chow_\d+_date", c)]
 
@@ -491,7 +625,7 @@ else:
             .fillna({"num_chows_lite":0, "num_chows_mcr":0, "lite_dates":"", "mcr_dates":""}))
 
     comp["first_lite_date"] = comp["lite_dates"].apply(first_date_str)
-    comp["first_mcr_date"]  = comp["mcr_dates"].apply(first_date_str)
+    comp["first_mcr_date"]  = comp["mcr_dates"].apply(last_date_str)  # audit choice
     comp["last_lite_date"]  = comp["lite_dates"].apply(last_date_str)
     comp["last_mcr_date"]   = comp["mcr_dates"].apply(last_date_str)
     comp["delta_first_months"] = comp.apply(lambda r: month_diff(r["first_lite_date"], r["first_mcr_date"]), axis=1)
@@ -536,7 +670,7 @@ else:
     one_one.to_csv(ONEVONE_FP, index=False)
     print(f"[saved] {ONEVONE_FP}  rows={len(one_one):,}  cols={len(one_one.columns)}")
 
-    # (2) Mismatches (only_lite / only_mcr / both_yes_different_months)
+    # (2) Mismatches
     mis = comp[comp["match_type"].isin(["only_lite","only_mcr","both_yes_different_months"])].copy()
     mis.to_csv(MIS_FP, index=False)
     print(f"[saved] {MIS_FP}  rows={len(mis):,}  cols={len(mis.columns)}")
