@@ -3,27 +3,13 @@
 # -----------------------------------------------------------------------------
 # CMS Provider Info — Extract → Standardize → Combine
 #
-# Additions vs original:
-# - Robust header normalization (handles NBSPs and all unicode dashes)
-# - Case-mix total across header variants:
-#     exp_total (2017–2018), cm_total (2019–2020),
-#     case-mix total long label (2021+)
-#   → outputs: case_mix_total (raw), case_mix_total_num (float), case_mix_total_src (if present)
-# - CCRC flags across variants → ccrc_facility (boolean)
-# - SFF handling:
-#     * sff_status_text from “Special Focus Status” (raw text e.g., “SFF”, “SFF Candidate”, “Former SFF”)
-#     * sff_facility from “Special Focus Facility” (Y/N → boolean)
-#     * sff_flag from “SFF” (boolean-like if present)
-#     * sff_class ∈ {current,candidate,former,none,unknown}
-#     * sff_current/sff_candidate/sff_former booleans
-# - Row-level audit columns for which header supplied each value
-#
-# Existing behavior preserved:
-# - CCN cleaning & raw CCN columns
-# - provider_name, provider_resides_in_hospital (with pre-2020 aliases)
-# - Monthly outputs: provider_info_YYYY_MM.csv
-# - Combined: provider_info_combined.csv
-# - Hospital panel/list outputs unchanged
+# Changes:
+#   • sff_facility dummy from status text:
+#       sff_facility = 1 if status ∈ {"SFF","SFF Candidate"} (i.e., class ∈ {current,candidate})
+#                    = 0 otherwise (former/none/unknown)
+#   • case_mix_total_num is LEADed by TWO QUARTERS (6 months) in the COMBINED output
+#       (we overwrite the column with its 6-month lead; name unchanged)
+#   • ccrc_facility stored as 0/1 (Int8) in combined output
 # -----------------------------------------------------------------------------
 
 import os, re, zipfile
@@ -86,20 +72,13 @@ def safe_read_csv(raw: bytes) -> pd.DataFrame:
     return pd.read_csv(BytesIO(raw), dtype=str, encoding="utf-8", encoding_errors="replace", low_memory=False)
 
 def norm_cols(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Robust header normalization:
-    - NBSP → space
-    - Any unicode dash/minus → space
-    - collapse spaces → underscore
-    - lowercase, drop non [a-z0-9_]
-    """
-    dash_chars = r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212-]"  # unicode dashes + ASCII -
+    dash_chars = r"[\u2010\u2011\u2012\u2013\u2014\u2015\u2212-]"
     cols = pd.Index(df.columns)
-    cols = cols.str.replace("\u00A0", " ", regex=False)           # NBSP -> space
-    cols = cols.str.replace(dash_chars, " ", regex=True)          # any dash -> space
+    cols = cols.str.replace("\u00A0", " ", regex=False)
+    cols = cols.str.replace(dash_chars, " ", regex=True)
     cols = cols.str.strip().str.lower()
-    cols = cols.str.replace(r"\s+", "_", regex=True)              # spaces -> _
-    cols = cols.str.replace(r"[^0-9a-z_]", "", regex=True)        # drop other punct
+    cols = cols.str.replace(r"\s+", "_", regex=True)
+    cols = cols.str.replace(r"[^0-9a-z_]", "", regex=True)
     df.columns = cols
     return df
 
@@ -111,7 +90,6 @@ def to_boolish(s: pd.Series) -> pd.Series:
     }).astype("boolean")
 
 def pick_first_nonnull(df: pd.DataFrame, candidates: list[str]) -> tuple[pd.Series, pd.Series]:
-    """Return (series, used_col_per_row) for first non-null among normalized candidate headers."""
     out  = pd.Series(pd.NA, index=df.index, dtype="object")
     used = pd.Series(pd.NA, index=df.index, dtype="object")
     for c in candidates:
@@ -137,183 +115,122 @@ PRIMARY_CCN_ORDER = [
     "provider_number",
 ]
 
-# Provider/hospital columns to keep (with pre-2020 aliases)
-NAME_CANDIDATES = ["provider_name", "provname"]  # provname pre-2020
+NAME_CANDIDATES = ["provider_name", "provname"]
 HOSP_CANDIDATES = [
     "provider_resides_in_hospital",
     "resides_in_hospital",
     "provider_resides_in_hospital_",
-    "inhosp"  # pre-2020
+    "inhosp"
 ]
 
 # ============================ New variable candidates =========================
-# Case-mix (2017–2018 exp_total; 2019–2020 cm_total; 2021+ long label)
 CASE_MIX_CANDS = [
     "exp_total",
     "cm_total",
-    "case_mix_total_nurse_staffing_hours_per_resident_per_day",  # normalized long label
-    "casemix_total_nurse_staffing_hours_per_resident_per_day",   # fallback
+    "case_mix_total_nurse_staffing_hours_per_resident_per_day",
+    "casemix_total_nurse_staffing_hours_per_resident_per_day",
 ]
-CASE_MIX_SRC_CANDS = ["cm_total_src"]  # if present; provenance indicator
+CASE_MIX_SRC_CANDS = ["cm_total_src"]
 
-# CCRC flags
 CCRC_CANDS = [
     "ccrc_facil",
     "continuing_care_retirement_community",
 ]
 
-# SFF inputs
-SFF_STATUS_TEXT_CANDS = ["special_focus_status"]     # raw text: “SFF”, “SFF Candidate”, “Former SFF”, …
-SFF_FACILITY_CANDS    = ["special_focus_facility"]   # Y/N → current
-SFF_FLAG_CANDS        = ["sff"]                      # simple boolean-like if present
+SFF_STATUS_TEXT_CANDS = ["special_focus_status"]
+SFF_FACILITY_CANDS    = ["special_focus_facility"]
+SFF_FLAG_CANDS        = ["sff"]
 
-# ============================ CCN cleaning logic ==============================
+# ============================ CCN cleaning ====================================
 ALNUM_6_7 = re.compile(r"^[0-9A-Z]{6,7}$")
-
 def clean_primary_ccn(val: str) -> str | float:
-    """
-    Keep 6–7 char alphanumeric CCNs; pad numeric-only to 6; drop '+' or '.' cases.
-    Returns cleaned CCN (str) or np.nan if invalid.
-    """
     if val is None or (isinstance(val, float) and pd.isna(val)):
         return np.nan
     s = str(val).strip().upper()
-
-    # hard-drop obvious junk (scientific notation artifacts)
-    if "+" in s or "." in s:
+    if "+" in s or "." in s:  # junk
         return np.nan
-
-    # if purely digits, pad to 6
     if s.isdigit():
         return s.zfill(6)
-
-    # keep if 6–7 chars, alphanumeric only
     if ALNUM_6_7.fullmatch(s):
         return s
-
-    # otherwise invalid
     return np.nan
 
 # ============================ SFF classification ==============================
 def classify_sff_text(text: str | float) -> str | None:
-    """
-    Map free text to {current, candidate, former, none, unknown}.
-    Interprets bare 'SFF' as current; 'SFF Candidate' as candidate;
-    'Former/Graduated/Terminated' as former; 'No/Not in SFF' as none.
-    """
-    if text is None or (isinstance(text, float) and pd.isna(text)):
-        return None
+    if text is None or (isinstance(text, float) and pd.isna(text)): return None
     t = str(text).strip()
-    if t == "" or t.lower() == "nan":
-        return None
-
-    # Normalize spaces/dashes
-    t = (t.replace("\u00A0", " ")
-           .replace("—", "-").replace("–", "-"))
+    if t == "" or t.lower() == "nan": return None
+    t = (t.replace("\u00A0", " ").replace("—", "-").replace("–", "-"))
     tl = t.lower()
-
-    # Y/N in text
-    if tl in {"y", "yes"}: return "current"
-    if tl in {"n", "no"}:  return "none"
-
-    # Specific textual buckets (order matters)
-    if "candidate" in tl:
-        return "candidate"
-    if "former" in tl or "graduated" in tl or "terminated" in tl or "no longer" in tl:
-        return "former"
-    if "not" in tl and "sff" in tl:
-        return "none"
-
-    # Bare "sff" implies current unless candidate/former present (already caught)
-    if tl == "sff" or tl.startswith("sff") or (" sff" in tl):
-        return "current"
-
+    if tl in {"y","yes"}: return "current"
+    if tl in {"n","no"}:  return "none"
+    if "candidate" in tl: return "candidate"
+    if "former" in tl or "graduated" in tl or "terminated" in tl or "no longer" in tl: return "former"
+    if "not" in tl and "sff" in tl: return "none"
+    if tl == "sff" or tl.startswith("sff") or (" sff" in tl): return "current"
     return "unknown"
 
 def coalesce_sff_class(text_cls: pd.Series,
                        facility_bool: pd.Series,
                        simple_bool: pd.Series) -> pd.Series:
-    """
-    Preference order: text class > facility Y/N > simple bool > unknown
-    """
     out = text_cls.copy()
-
-    # Fill from facility bool
     mask = out.isna() | (out == "unknown")
     if mask.any():
         tmp = pd.Series(pd.NA, index=out.index, dtype="object")
         tmp.loc[facility_bool == True]  = "current"
         tmp.loc[facility_bool == False] = "none"
         out = out.mask(mask & tmp.notna(), tmp)
-
-    # Fill from simple bool
     mask = out.isna() | (out == "unknown")
     if mask.any():
         tmp2 = pd.Series(pd.NA, index=out.index, dtype="object")
         tmp2.loc[simple_bool == True]  = "current"
         tmp2.loc[simple_bool == False] = "none"
         out = out.mask(mask & tmp2.notna(), tmp2)
-
-    # Remaining → unknown
-    out = out.fillna("unknown")
-    return out.astype("string")
+    return out.fillna("unknown").astype("string")
 
 # ============================ Standardize one month ===========================
 def standardize_provider_info(df: pd.DataFrame, yyyy: int, mm: int, source_name: str) -> pd.DataFrame:
     df = norm_cols(df)
 
-    # Build hospital flag (first non-null among candidates)
+    # Hospital flag
     hosp = pd.Series(pd.NA, index=df.index, dtype="object")
     for cand in HOSP_CANDIDATES:
         if cand in df.columns:
             mapped = to_boolish(df[cand])
             hosp = hosp.mask(hosp.isna() & mapped.notna(), mapped)
 
-    # Provider name (first non-null among candidates)
+    # Provider name
     pname = pd.Series(pd.NA, index=df.index, dtype="object")
     for cand in NAME_CANDIDATES:
         if cand in df.columns:
-            fill = pname.isna() & df[cand].notna()
-            pname = pname.mask(fill, df[cand])
+            pname = pname.mask(pname.isna() & df[cand].notna(), df[cand])
 
-    # Determine which CCN candidate columns exist in this file
+    # Primary CCN
     present_cands = [c for c in PRIMARY_CCN_ORDER if c in df.columns]
-
-    # Primary CCN (NO cleaning yet): first non-null among present candidates
     primary = pd.Series(pd.NA, index=df.index, dtype="object")
     for c in present_cands:
-        fill = primary.isna() & df[c].notna()
-        primary = primary.mask(fill, df[c])
-
-    # Clean the primary CCN using the strict rule
+        primary = primary.mask(primary.isna() & df[c].notna(), df[c])
     cleaned = primary.map(clean_primary_ccn)
+    raw_ccn_cols = {f"ccn_raw_{c}": df[c] for c in present_cands}
 
-    # Create prefixed raw copies (keep everything CCN-related we saw)
-    raw_ccn_cols = {}
-    for c in present_cands:
-        raw_ccn_cols[f"ccn_raw_{c}"] = df[c]
-
-    # -------------------------- New variables ---------------------------------
-    # Case-mix
-    case_mix, raw_cm_used = pick_first_nonnull(df, CASE_MIX_CANDS)
+    # Case-mix (unlagged here; we lead in combine step)
+    case_mix, raw_cm_used       = pick_first_nonnull(df, CASE_MIX_CANDS)
     case_mix_src, raw_cm_src_used = pick_first_nonnull(df, CASE_MIX_SRC_CANDS)
     case_mix_num = pd.to_numeric(case_mix, errors="coerce")
 
     # CCRC
-    ccrc_facil, raw_ccrc_used = pick_bool(df, CCRC_CANDS)
+    ccrc_bool, raw_ccrc_used = pick_bool(df, CCRC_CANDS)
 
     # SFF bits
     sff_status_text, raw_sff_status_text_used = pick_first_nonnull(df, SFF_STATUS_TEXT_CANDS)
-    sff_facility, raw_sff_facility_used       = pick_bool(df, SFF_FACILITY_CANDS)
-    sff_flag, raw_sff_flag_used               = pick_bool(df, SFF_FLAG_CANDS)
-
+    sff_facility_bool, raw_sff_facility_used  = pick_bool(df, SFF_FACILITY_CANDS)
+    sff_flag_bool,     raw_sff_flag_used      = pick_bool(df, SFF_FLAG_CANDS)
     sff_text_cls = sff_status_text.map(classify_sff_text)
-    sff_class    = coalesce_sff_class(sff_text_cls, sff_facility, sff_flag)
-    sff_current  = sff_class.map({"current": True}).astype("boolean")
-    sff_candidate= sff_class.eq("candidate")
-    sff_former   = sff_class.eq("former")
+    sff_class    = coalesce_sff_class(sff_text_cls, sff_facility_bool, sff_flag_bool)
 
-    # Month context + output
+    # >>> SFF facility dummy from status text (current/candidate = 1) <<<
+    sff_facility_dummy = sff_class.isin(["current","candidate"]).astype("Int8")
+
     df_out = pd.DataFrame({
         "cms_certification_number": cleaned,
         "provider_name": pname,
@@ -323,22 +240,21 @@ def standardize_provider_info(df: pd.DataFrame, yyyy: int, mm: int, source_name:
         "date": pd.Timestamp(year=int(yyyy), month=int(mm), day=1).strftime("%Y-%m-%d"),
         "source_file": Path(source_name).name,
 
-        # New fields
         "case_mix_total": case_mix,
         "case_mix_total_num": case_mix_num,
         "case_mix_total_src": case_mix_src,
 
-        "ccrc_facility": ccrc_facil,
+        # keep original bool for reference; will be cast to 0/1 in combine
+        "ccrc_facility": ccrc_bool,
 
-        "sff_facility": sff_facility,
-        "sff_flag": sff_flag,
+        "sff_facility": sff_facility_dummy,
+        "sff_flag": sff_flag_bool,
         "sff_status_text": sff_status_text,
         "sff_class": sff_class,
-        "sff_current": sff_current,
-        "sff_candidate": sff_candidate,
-        "sff_former": sff_former,
+        "sff_current": sff_class.eq("current"),
+        "sff_candidate": sff_class.eq("candidate"),
+        "sff_former": sff_class.eq("former"),
 
-        # Audit columns (which header supplied each field)
         "raw_case_mix_total_col": raw_cm_used,
         "raw_case_mix_total_src_col": raw_cm_src_used,
         "raw_ccrc_col": raw_ccrc_used,
@@ -347,37 +263,11 @@ def standardize_provider_info(df: pd.DataFrame, yyyy: int, mm: int, source_name:
         "raw_sff_status_text_col": raw_sff_status_text_used,
     })
 
-    # Attach raw CCN columns
     for k, v in raw_ccn_cols.items():
         df_out[k] = v
 
-    # Drop rows with invalid CCN (cleaning yielded NaN)
-    before_rows = len(df_out)
-    df_out = df_out.dropna(subset=["cms_certification_number"])
-    dropped = before_rows - len(df_out)
-    if dropped:
-        print(f"  [clean-ccn] dropped {dropped:,} row(s) with invalid CCN in {source_name}")
-
-    # Drop exact duplicates within this month
-    before = len(df_out)
-    df_out = df_out.drop_duplicates()
-    if len(df_out) != before:
-        print(f"  [dedup-month] removed {before - len(df_out):,} exact dupe row(s) in {source_name}")
-
-    # Reorder & sort (keep legacy columns first; append new fields + audits)
-    out_cols = (
-        ["cms_certification_number"] +
-        [c for c in df_out.columns if c.startswith("ccn_raw_")] +
-        ["provider_name", "provider_resides_in_hospital", "year", "month", "date", "source_file"] +
-        [
-            "case_mix_total","case_mix_total_num","case_mix_total_src",
-            "ccrc_facility",
-            "sff_facility","sff_flag","sff_status_text","sff_class","sff_current","sff_candidate","sff_former",
-            "raw_case_mix_total_col","raw_case_mix_total_src_col",
-            "raw_ccrc_col","raw_sff_facility_col","raw_sff_flag_col","raw_sff_status_text_col",
-        ]
-    )
-    df_out = df_out[out_cols]
+    # drop invalid CCN & dups
+    df_out = df_out.dropna(subset=["cms_certification_number"]).drop_duplicates()
     df_out = df_out.sort_values(["cms_certification_number","date"], kind="mergesort").reset_index(drop=True)
     return df_out
 
@@ -403,12 +293,9 @@ def extract_and_standardize():
                             for pat in PRIORITY:
                                 for e in entries:
                                     if pat in Path(e).name.lower() and Path(e).suffix.lower() == ".csv":
-                                        chosen = e
-                                        break
-                                if chosen:
-                                    break
-                            if not chosen:
-                                continue
+                                        chosen = e; break
+                                if chosen: break
+                            if not chosen: continue
 
                             raw = mz.read(chosen)
                             df = safe_read_csv(raw)
@@ -416,61 +303,56 @@ def extract_and_standardize():
                                 df, yyyy, mm,
                                 f"{yzip.name}!{Path(inner).name}!{Path(chosen).name}"
                             )
-
                             out_name = f"provider_info_{yyyy:04d}_{mm:02d}.csv"
-                            out_path = PROV_DIR / out_name
-                            std.to_csv(out_path, index=False)
-                            print(f"[save] {out_name:>22}  rows={len(std):,}")
-                            written += 1
+                            (PROV_DIR / out_name).write_text(std.to_csv(index=False))
+                            print(f"[save] {out_name:>22}  rows={len(std):,}"); written += 1
                     except zipfile.BadZipFile:
                         continue
     print(f"\n[extract+standardize] wrote {written} monthly provider_info CSV(s).")
 
 # ====================== TRUE-ONLY hospital panel & latest list =================
 def build_hospital_flags(prov: pd.DataFrame):
-    """Build and save: (1) TRUE-only monthly panel, (2) latest TRUE-only list per CCN."""
-    # Coerce to strict booleans; treat anything else as False
-    map_bool = {
-        "True": True, "False": False,
-        True: True, False: False,
-        "true": True, "false": False
-    }
+    map_bool = {"True":True, "False":False, True:True, False:False, "true":True, "false":False}
     prov = prov.copy()
-    prov["provider_resides_in_hospital"] = (
-        prov["provider_resides_in_hospital"].map(map_bool).fillna(False)
-    )
+    prov["provider_resides_in_hospital"] = prov["provider_resides_in_hospital"].map(map_bool).fillna(False)
 
-    # Keep ONLY rows/months explicitly marked True (no forward-fill)
     panel_true = (
         prov.loc[prov["provider_resides_in_hospital"] == True,
                  ["cms_certification_number", "date", "provider_name"]]
-        .dropna(subset=["cms_certification_number", "date"])
-        .drop_duplicates(["cms_certification_number", "date"])
-        .sort_values(["cms_certification_number", "date"], kind="mergesort")
-        .reset_index(drop=True)
+          .dropna(subset=["cms_certification_number","date"])
+          .drop_duplicates(["cms_certification_number","date"])
+          .sort_values(["cms_certification_number","date"], kind="mergesort")
+          .reset_index(drop=True)
     )
-
-    # Add an explicit flag column (all True) to match downstream expectations
     panel_true["provider_resides_in_hospital"] = True
-
-    # Save the monthly TRUE-only panel
     panel_true.to_csv(HOSP_PANEL_CSV, index=False)
-    print(
-        f"[save] hospital panel (TRUE-only) → {HOSP_PANEL_CSV}  "
-        f"({len(panel_true):,} rows, {panel_true['cms_certification_number'].nunique():,} CCNs)"
-    )
+    print(f"[save] hospital panel (TRUE-only) → {HOSP_PANEL_CSV}  ({len(panel_true):,} rows, {panel_true['cms_certification_number'].nunique():,} CCNs)")
 
-    # Latest TRUE month per CCN (if a CCN never had TRUE, it won't appear here)
     last_true = (
-        panel_true
-        .sort_values(["cms_certification_number", "date"], kind="mergesort")
-        .groupby("cms_certification_number", as_index=False, sort=False)
-        .last()[["cms_certification_number","provider_resides_in_hospital","provider_name"]]
+        panel_true.sort_values(["cms_certification_number","date"], kind="mergesort")
+                  .groupby("cms_certification_number", as_index=False, sort=False)
+                  .last()[["cms_certification_number","provider_resides_in_hospital","provider_name"]]
     )
     last_true.to_csv(HOSP_CSV, index=False)
     print(f"[save] hospital list (latest TRUE only) → {HOSP_CSV}  ({len(last_true):,} CCNs)")
-
     return panel_true, last_true
+
+# ============================ Case-mix: 2-quarter LEAD ========================
+def apply_case_mix_two_quarter_lead(prov: pd.DataFrame) -> pd.DataFrame:
+    """
+    Overwrite case_mix_total_num with its 6-month LEAD (2 quarters), by CCN.
+    Reported in month t corresponds to actual case-mix for t+6 months.
+    """
+    prov = prov.copy()
+    prov["date"] = pd.to_datetime(prov["date"], errors="coerce")
+    # build lookup of value at (ccn, date+6m)
+    look = prov[["cms_certification_number","date","case_mix_total_num"]].copy()
+    look["date"] = look["date"] + pd.DateOffset(months=6)  # shift forward
+    look = look.rename(columns={"case_mix_total_num": "_lead_val"})
+    prov = prov.merge(look, on=["cms_certification_number","date"], how="left")
+    prov["case_mix_total_num"] = prov["_lead_val"]
+    prov = prov.drop(columns=["_lead_val"])
+    return prov
 
 # ============================ Combine + hospital list =========================
 def combine_and_make_hospital_list():
@@ -483,23 +365,35 @@ def combine_and_make_hospital_list():
         try:
             df = pd.read_csv(p, dtype=str, low_memory=False)
             df["date"] = pd.to_datetime(df["date"], format="%Y-%m-%d", errors="coerce")
+            # types we altered
+            if "sff_facility" in df.columns:
+                df["sff_facility"] = pd.to_numeric(df["sff_facility"], errors="coerce").fillna(0).astype("Int8")
+            if "case_mix_total_num" in df.columns:
+                df["case_mix_total_num"] = pd.to_numeric(df["case_mix_total_num"], errors="coerce")
+            # ccrc_facility to 0/1 Int8
+            if "ccrc_facility" in df.columns:
+                if str(df["ccrc_facility"].dtype) == "boolean":
+                    df["ccrc_facility"] = df["ccrc_facility"].astype("Int8")
+                else:
+                    s = df["ccrc_facility"].astype("string").str.strip().str.lower()
+                    df["ccrc_facility"] = s.map({
+                        "1":1,"true":1,"t":1,"yes":1,"y":1,
+                        "0":0,"false":0,"f":0,"no":0,"n":0
+                    }).astype("Int8")
             frames.append(df)
         except Exception as e:
             print(f"[warn] failed reading {p.name}: {e}")
 
-    prov = pd.concat(frames, ignore_index=True)
+    prov = pd.concat(frames, ignore_index=True).drop_duplicates()
 
-    # Drop exact duplicates across all months
-    before = len(prov)
-    prov = prov.drop_duplicates()
-    print(f"[dedup-combined] removed {before - len(prov):,} exact dupe row(s) across all months")
+    # >>> apply 6-month LEAD to case_mix_total_num <<<
+    if "case_mix_total_num" in prov.columns:
+        prov = apply_case_mix_two_quarter_lead(prov)
 
-    # Sort and save the combined file
     prov = prov.sort_values(["cms_certification_number","date","source_file"], kind="mergesort").reset_index(drop=True)
     prov.to_csv(COMBINED_CSV, index=False)
-    print(f"[save] combined → {COMBINED_CSV}  ({len(prov):,} rows)")
+    print(f"[save] combined (with 2-quarter LEAD on case_mix_total_num) → {COMBINED_CSV}  ({len(prov):,} rows)")
 
-    # Build and save TRUE-only hospital panel + latest list
     build_hospital_flags(prov)
 
 # =============================== RUN ==========================================

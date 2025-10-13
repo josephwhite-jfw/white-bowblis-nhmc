@@ -3,8 +3,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Final PBJ Panel with CHOW Dummies + MCR Controls + Provider-Info Vars
 # Adds:
-#   • Merge provider-info monthly variables (case_mix_total_num, ccrc_facility, sff_class)
-#   • Case-mix bins (4 cols): national quartile/decile, state-within-month quartile/decile
+#   • Merge provider-info monthly variables:
+#       case_mix_total_num (already 2-quarter LEADed upstream),
+#       ccrc_facility (0/1), sff_facility (0/1), sff_class
+#   • Urban dummy (0/1) from urban_rural
+#   • Case-mix bins (4 cols): national quartile/decile, state×month quartile/decile
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os, re, warnings
@@ -31,7 +34,6 @@ RAW_DIR    = Path(os.getenv("NH_DATA_DIR", PROJECT_ROOT / "data" / "raw")).resol
 PROV_DIR   = RAW_DIR / "provider-info-files"
 HOSP_FP    = PROV_DIR / "provider_resides_in_hospital_by_ccn.csv"  # optional
 
-# Provider-info combined file (try 'testvars' first, then fallback)
 PROV_COMBINED_TESTVARS = PROV_DIR / "provider_info_testvars_combined.csv"
 PROV_COMBINED_DEFAULT  = PROV_DIR / "provider_info_combined.csv"
 
@@ -90,11 +92,6 @@ def find_col(cols, candidates):
     return None
 
 def rank_bins_pct(s: pd.Series, n_bins: int) -> pd.Series:
-    """
-    Robust quantile bins using percentile rank, per group:
-      - bin = ceil(pct_rank * n_bins), clipped to [1, n_bins]
-      - preserves NA where s is NA
-    """
     pct = s.rank(method="average", pct=True)
     bins = np.ceil(pct * n_bins)
     bins = pd.to_numeric(bins, errors="coerce").clip(1, n_bins)
@@ -397,48 +394,52 @@ def load_provider_info_monthly():
     src = PROV_COMBINED_TESTVARS if PROV_COMBINED_TESTVARS.exists() else PROV_COMBINED_DEFAULT
     if not src.exists():
         print(f"[provider-info] WARNING: {src} not found — skipping provider-info merge")
-        return pd.DataFrame(columns=["cms_certification_number","month","case_mix_total_num","ccrc_facility","sff_class"])
+        return pd.DataFrame(columns=[
+            "cms_certification_number","month",
+            "case_mix_total_num","ccrc_facility","sff_facility","sff_class"
+        ])
     df = pd.read_csv(src, dtype=str, low_memory=False)
     # Standardize
     df.columns = [c.strip().lower() for c in df.columns]
-    ccn_col = find_col(df.columns, ["cms_certification_number","ccn","provnum","provider_number","federal_provider_number"])
+    ccn_col  = find_col(df.columns, ["cms_certification_number","ccn","provnum","provider_number","federal_provider_number"])
     date_col = find_col(df.columns, ["date","month","period","as_of_date"])
-    # case mix numeric (prefer already numeric; else coerce)
-    cm_col = find_col(df.columns, ["case_mix_total_num","case_mix_total","cm_total","exp_total"])
+    cm_col   = find_col(df.columns, ["case_mix_total_num","case_mix_total","cm_total","exp_total"])
     ccrc_col = find_col(df.columns, ["ccrc_facility","continuing_care_retirement_community"])
-    sff_col  = find_col(df.columns, ["sff_class","sff_status","special_focus_status","special_focus_facility","sff_flag"])
+    sff_fac  = find_col(df.columns, ["sff_facility"])
+    sff_cls  = find_col(df.columns, ["sff_class","sff_status"])
     if ccn_col is None or date_col is None:
         print("[provider-info] columns not found — skipping")
-        return pd.DataFrame(columns=["cms_certification_number","month","case_mix_total_num","ccrc_facility","sff_class"])
+        return pd.DataFrame(columns=[
+            "cms_certification_number","month",
+            "case_mix_total_num","ccrc_facility","sff_facility","sff_class"
+        ])
 
     out = pd.DataFrame({
         "cms_certification_number": normalize_ccn_any(df[ccn_col]),
         "month": to_monthstart(df[date_col]),
     })
 
-    if cm_col:
-        cm_num = pd.to_numeric(df[cm_col], errors="coerce")
-        out["case_mix_total_num"] = cm_num
-    else:
-        out["case_mix_total_num"] = np.nan
+    # case mix numeric (should already be 2-quarter LEADed in the combined file)
+    out["case_mix_total_num"] = pd.to_numeric(df[cm_col], errors="coerce") if cm_col else np.nan
 
+    # ccrc_facility -> 0/1 Int8
     if ccrc_col:
-        out["ccrc_facility"] = bool_from_any(df[ccrc_col]).fillna(False).astype("boolean")
+        s = df[ccrc_col].astype("string").str.strip().str.lower()
+        out["ccrc_facility"] = s.map({
+            "1":1,"true":1,"t":1,"yes":1,"y":1,
+            "0":0,"false":0,"f":0,"no":0,"n":0
+        }).astype("Int8")
     else:
-        out["ccrc_facility"] = pd.NA
+        out["ccrc_facility"] = pd.Series([pd.NA]*len(out), dtype="Int8")
 
-    # SFF class harmonization (current / candidate / former / none / unknown)
-    s = df[sff_col].astype("string").str.strip().str.upper() if sff_col else pd.Series(pd.NA, index=df.index)
-    def _classify(v):
-        if v is None or pd.isna(v): return "unknown"
-        if v in {"Y","YES","TRUE","T","1","CURRENT","SFF"}: return "current"
-        if "CANDIDATE" in v: return "candidate"
-        if "FORMER" in v: return "former"
-        if v in {"N","NO","FALSE","F","0","NONE"}: return "none"
-        # loose fallback for strings like "SPECIAL FOCUS FACILITY" -> treat as current
-        if "SPECIAL" in v and "FOCUS" in v: return "current"
-        return "unknown"
-    out["sff_class"] = s.map(_classify).astype("string")
+    # sff_facility -> 0/1 Int8 (current or candidate = 1 in provider combine)
+    if sff_fac:
+        out["sff_facility"] = pd.to_numeric(df[sff_fac], errors="coerce").astype("Int8")
+    else:
+        out["sff_facility"] = pd.Series([pd.NA]*len(out), dtype="Int8")
+
+    # sff_class (keep as reference)
+    out["sff_class"] = df[sff_cls].astype("string") if sff_cls else pd.Series([pd.NA]*len(out), dtype="string")
 
     # Drop exact dupes and return
     out = (out.dropna(subset=["cms_certification_number","month"])
@@ -486,17 +487,12 @@ mcr_counts["first_event_month_mcr"] = first_month_from_date_cols(mcr, [r"^chow_\
 print("[diag] lite first-month non-null:", int(lite_counts["first_event_month_lite"].notna().sum()))
 print("[diag] mcr  first-month non-null:", int(mcr_counts["first_event_month_mcr"].notna().sum()))
 
-# === Use OVERLAP (inner join) as the agreement base to match your Excel tables ===
-merged_overlap = (
-    lite_counts.merge(mcr_counts, on="cms_certification_number", how="inner")
-)
+# === Use OVERLAP (inner join) as the agreement base ===
+merged_overlap = lite_counts.merge(mcr_counts, on="cms_certification_number", how="inner")
 
-# Small sanity crosstab (0/1/2+ buckets) on the same overlap base
 def _cat(n):
-    try:
-        n = int(n)
-    except Exception:
-        return "0"
+    try: n = int(n)
+    except Exception: return "0"
     if n <= 0: return "0"
     if n == 1: return "1"
     return "2+"
@@ -508,15 +504,13 @@ _overlap_ctab = pd.crosstab(_overlap["own_cat"], _overlap["mcr_cat"]).reindex(
     index=["0","1","2+"], columns=["0","1","2+"], fill_value=0
 )
 _overlap_ctab["Total"] = _overlap_ctab[["0","1","2+"]].sum(axis=1)
-print("\n=== Crosstab 0/1/2+ (OVERLAP base; should match Excel) ===")
+print("\n=== Crosstab 0/1/2+ (OVERLAP base) ===")
 print(_overlap_ctab.to_string())
 
 # ============================== Agreement logic (±6 months) ===================
 def agreement_picker(r):
     a, b = r["first_event_month_lite"], r["first_event_month_mcr"]
-    # default = mismatch (kept for diagnostics only)
     label, change_month = "mismatch", pd.NaT
-
     if (r["num_chows"] == 0) and (r["n_chow"] == 0):
         label = "match_0"
     elif (r["num_chows"] == 1) and (r["n_chow"] == 1):
@@ -525,7 +519,6 @@ def agreement_picker(r):
             change_month = pd.Period(a if pd.notna(a) else b, "M").to_timestamp("s")
         else:
             label = "match_1_diff_month"
-
     return pd.Series({"agreement": label, "change_month": change_month})
 
 ag = merged_overlap.apply(agreement_picker, axis=1)
@@ -536,7 +529,6 @@ agree = pd.concat([merged_overlap[["cms_certification_number","num_chows","n_cho
 print(f"[agree] match_0={int((agree['agreement']=='match_0').sum()):,} | "
       f"match_1_within_6m={int((agree['agreement']=='match_1_within_6m').sum()):,} | "
       f"total_agree={int(agree['agreement'].isin(['match_0','match_1_within_6m']).sum()):,}")
-
 
 # ============================== Prepare PBJ panel =============================
 pbj_month_col = find_col(pbj.columns, ["year_month","month","pbj_month","date","period_month"])
@@ -571,11 +563,18 @@ ever = (panel.groupby("cms_certification_number", as_index=False)["treat_post"].
              .rename(columns={"treat_post":"ever_treated"}))
 panel = panel.merge(ever, on="cms_certification_number", how="left")
 
+# ============================== ANALYTIC FILTER (match on 0 or 1) ============
+MATCH_SET = {"match_0", "match_1_within_6m"}
+if "agreement" not in panel.columns:
+    raise KeyError("Expected 'agreement' column not found in panel after merge.")
+panel = panel[panel["agreement"].isin(MATCH_SET)].copy()
+n_fac = panel["cms_certification_number"].nunique()
+print(f"[analytic filter] providers kept = {n_fac:,} (agreement in {sorted(MATCH_SET)})")
+
 # ============================== BUILD + MERGE CONTROLS =======================
 controls_monthly = build_mcr_controls_monthly()
 
 if not controls_monthly.empty:
-    # Merge controls by CCN×month
     panel = panel.merge(
         controls_monthly,
         on=["cms_certification_number","month"],
@@ -626,60 +625,51 @@ else:
 # ============================== MERGE PROVIDER-INFO VARS ======================
 prov_info = load_provider_info_monthly()
 if not prov_info.empty:
-    # Merge on CCN×month
-    keep_cols = ["cms_certification_number","month","case_mix_total_num","ccrc_facility","sff_class"]
+    keep_cols = ["cms_certification_number","month","case_mix_total_num","ccrc_facility","sff_facility","sff_class"]
     panel = panel.merge(prov_info[keep_cols], on=["cms_certification_number","month"], how="left")
 
-    # Diagnostics
-    print("[provider-info] matches on CCN×month:", int(panel["case_mix_total_num"].notna().sum()))
-    print("[provider-info] ccrc non-null:", int(panel["ccrc_facility"].notna().sum()))
-    print("[provider-info] sff_class non-null:", int(panel["sff_class"].notna().sum()))
+    # Ensure 0/1 Int8 dummies
+    if "ccrc_facility" in panel.columns:
+        panel["ccrc_facility"] = pd.to_numeric(panel["ccrc_facility"], errors="coerce").astype("Int8")
+    if "sff_facility" in panel.columns:
+        panel["sff_facility"] = pd.to_numeric(panel["sff_facility"], errors="coerce").astype("Int8")
+
+    print("[provider-info] matches case-mix:", int(panel["case_mix_total_num"].notna().sum()) if "case_mix_total_num" in panel.columns else 0)
+    print("[provider-info] ccrc matched:", int(panel["ccrc_facility"].notna().sum()) if "ccrc_facility" in panel.columns else 0)
+    print("[provider-info] sff matched:", int(panel["sff_facility"].notna().sum()) if "sff_facility" in panel.columns else 0)
 else:
     print("[provider-info] empty — no provider-info variables merged")
 
-# ============================== CASE-MIX QUANTILE COLUMNS =====================
+# ============================== URBAN 0/1 DUMMY ===============================
+def make_urban_dummy(df):
+    if "urban_rural" in df.columns:
+        s = df["urban_rural"].astype("string").str.strip().str.title()
+        return s.map({"Urban":1, "Rural":0}).astype("Int8")
+    return pd.Series([pd.NA]*len(df), dtype="Int8")
+
+panel["urban"] = make_urban_dummy(panel)
+
+# ============================== CASE-MIX QUANTILES ============================
 if "case_mix_total_num" in panel.columns:
-    # National (by month): quartile & decile
     panel["case_mix_quartile_nat"] = (
         panel.groupby("month", observed=True)["case_mix_total_num"]
-             .transform(lambda s: rank_bins_pct(s, 4))
-             .astype("Int16")
+             .transform(lambda s: rank_bins_pct(s, 4)).astype("Int16")
     )
     panel["case_mix_decile_nat"] = (
         panel.groupby("month", observed=True)["case_mix_total_num"]
-             .transform(lambda s: rank_bins_pct(s, 10))
-             .astype("Int16")
+             .transform(lambda s: rank_bins_pct(s, 10)).astype("Int16")
     )
-
-    # State (by month & state): quartile & decile
     if "state" in panel.columns:
-        # Only compute where state is known
         mask_state = panel["state"].notna()
         panel.loc[mask_state, "case_mix_quartile_state"] = (
-            panel[mask_state]
-            .groupby(["month","state"], observed=True)["case_mix_total_num"]
-            .transform(lambda s: rank_bins_pct(s, 4))
-            .astype("Int16")
+            panel[mask_state].groupby(["month","state"], observed=True)["case_mix_total_num"]
+                            .transform(lambda s: rank_bins_pct(s, 4)).astype("Int16")
         )
         panel.loc[mask_state, "case_mix_decile_state"] = (
-            panel[mask_state]
-            .groupby(["month","state"], observed=True)["case_mix_total_num"]
-            .transform(lambda s: rank_bins_pct(s, 10))
-            .astype("Int16")
+            panel[mask_state].groupby(["month","state"], observed=True)["case_mix_total_num"]
+                            .transform(lambda s: rank_bins_pct(s, 10)).astype("Int16")
         )
-        # leave as NA where state is missing
-    else:
-        panel["case_mix_quartile_state"] = pd.Series([pd.NA]*len(panel), dtype="Int16")
-        panel["case_mix_decile_state"]   = pd.Series([pd.NA]*len(panel), dtype="Int16")
-
-    # Types (ensure integer dtypes with NA support)
-    for c in ["case_mix_quartile_nat","case_mix_decile_nat","case_mix_quartile_state","case_mix_decile_state"]:
-        if c in panel.columns:
-            panel[c] = panel[c].astype("Int16")
-
-    # Quick sanity print
-    cm_nonnull = int(panel["case_mix_total_num"].notna().sum())
-    print(f"[case-mix] non-null rows={cm_nonnull:,}")
+    print(f"[case-mix] non-null rows={int(panel['case_mix_total_num'].notna().sum()):,}")
 else:
     print("[case-mix] WARNING: 'case_mix_total_num' not present — skipping quantile columns")
 
@@ -689,9 +679,10 @@ panel.to_csv(OUT_FP, index=False)
 
 cols_show = [c for c in [
     "cms_certification_number","month","agreement","change_month",
-    "treat_post","event_time","ownership_type","for_profit","non_profit",
-    "pct_medicare","pct_medicaid","num_beds","occupancy_rate","state","urban_rural","is_chain",
-    "ccrc_facility","sff_class","case_mix_total_num",
+    "treat_post","event_time",
+    "ownership_type","for_profit","non_profit",
+    "pct_medicare","pct_medicaid","num_beds","occupancy_rate","state","urban_rural","urban","is_chain",
+    "ccrc_facility","sff_facility","sff_class","case_mix_total_num",
     "case_mix_quartile_nat","case_mix_decile_nat","case_mix_quartile_state","case_mix_decile_state"
 ] if c in panel.columns]
 
