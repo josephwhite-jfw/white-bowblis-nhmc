@@ -1,0 +1,97 @@
+---
+title: "Summary Statistics — PBJ Panel"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+fontsize: 11pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3)
+
+library(dplyr)
+library(readr)
+library(modelsummary)  # datasummary_skim, datasummary_balance
+```
+
+# Data
+
+```{r data}
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/pbj_panel_with_chow_dummies.csv"
+
+df <- read_csv(
+  panel_fp,
+  col_types = cols(
+    month = col_date(),
+    cms_certification_number = col_character()
+  )
+) |>
+  mutate(
+    for_profit    = as.integer(for_profit),
+    non_profit    = as.integer(non_profit),
+    is_chain      = as.integer(is_chain),
+    ccrc_facility = as.integer(ccrc_facility),
+    urban         = as.integer(ifelse(urban %in% c(1, "1"), 1, 0)),
+    cm_state_q    = ifelse(is.na(case_mix_quartile_state), -1L, as.integer(case_mix_quartile_state))
+  )
+
+# variables to summarize
+vars <- c(
+  "rn_hppd", "lpn_hppd", "cna_hppd", "total_hppd",
+  "for_profit", "non_profit", "is_chain", "num_beds", "ccrc_facility",
+  "occupancy_rate", "pct_medicare", "pct_medicaid",
+  "cm_state_q", "urban"
+)
+
+df_sum <- df |> select(all_of(vars))
+```
+
+# Summary Statistics (Overall)
+
+```{r skim}
+# Nice overall summary with N, Mean, SD, Min, Quartiles, Max
+datasummary_skim(
+  df_sum,
+  type = "numeric",
+  output = "markdown"
+)
+```
+
+# Categorical Shares (0/1 indicators)
+
+```{r shares}
+# For dummy variables, also show mean as share (and N)
+dummies <- c("for_profit","non_profit","is_chain","ccrc_facility","urban")
+tab_share <- df_sum |>
+  summarise(
+    across(all_of(dummies), list(Share = ~ mean(.x, na.rm = TRUE),
+                                 N = ~ sum(!is.na(.x))))
+  ) |>
+  tidyr::pivot_longer(everything(),
+                      names_to = c("Variable",".value"),
+                      names_sep = "_")
+
+modelsummary::datasummary_df(tab_share, output = "markdown")
+```
+
+# Balance-style Table by For-Profit Status (Optional)
+
+```{r balance}
+# If you want a split table by for_profit (0 vs 1)
+# This shows N, Mean, SD for selected continuous variables
+balance_vars <- c("rn_hppd","lpn_hppd","cna_hppd","total_hppd",
+                  "num_beds","occupancy_rate","pct_medicare","pct_medicaid")
+
+datasummary_balance(
+  ~ for_profit,
+  data = df_sum |> select(all_of(balance_vars), for_profit),
+  fmt = 3,
+  output = "markdown"
+)
+```
