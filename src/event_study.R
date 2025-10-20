@@ -1,56 +1,83 @@
-# ============================================================
-# Summary Statistics for final_analytical_panel.csv
-# ============================================================
-
-library(dplyr)
+library(fixest)
 library(readr)
+library(dplyr)
 
-# --- Load panel ---
-panel <- read_csv("C:/Repositories/white-bowblis-nhmc/data/clean/final_analytical_panel.csv",
-                  show_col_types = FALSE)
+# === Load panel ===
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/analytical_panel.csv"
+df <- read_csv(panel_fp, show_col_types = FALSE)
 
-# --- 1. Averages (continuous variables) ---
-avg_stats <- panel %>%
-  summarise(
-    rn_hppd_avg         = mean(rn_hppd, na.rm = TRUE),
-    lpn_hppd_avg        = mean(lpn_hppd, na.rm = TRUE),
-    cna_hppd_avg        = mean(cna_hppd, na.rm = TRUE),
-    total_hppd_avg      = mean(total_hppd, na.rm = TRUE),
-    pct_medicare_avg    = mean(pct_medicare, na.rm = TRUE),
-    pct_medicaid_avg    = mean(pct_medicaid, na.rm = TRUE),
-    num_beds_avg        = mean(num_beds, na.rm = TRUE),
-    occupancy_rate_avg  = mean(occupancy_rate, na.rm = TRUE)
-  )
-
-cat("\n=== AVERAGE STAFFING & CONTROLS ===\n")
-print(avg_stats)
-
-# --- 2. Counts by facility (CCN-level flags) ---
-ccn_flags <- panel %>%
+# === Ever-treated indicator (1 for treated homes in all periods, else 0) ===
+df <- df %>%
   group_by(cms_certification_number) %>%
-  summarise(
-    is_chain_facility   = as.integer(any(is_chain == 1, na.rm = TRUE)),
-    for_profit_facility = as.integer(any(for_profit == 1, na.rm = TRUE)),
-    non_profit_facility = as.integer(any(non_profit == 1, na.rm = TRUE)),
-    ccrc_facility_any   = as.integer(any(ccrc_facility == 1, na.rm = TRUE)),
-    sff_facility_any    = as.integer(any(sff_facility == 1, na.rm = TRUE)),
-    urban_facility      = as.integer(any(urban == 1, na.rm = TRUE))
-  ) %>%
+  mutate(ever_treated = as.integer(any(treatment == 1, na.rm = TRUE))) %>%
+  ungroup()
+
+
+y <- "rn_hppd"  # switch to lpn_hppd / cna_hppd / total_hppd to inspect others
+
+controls_vec <- c("government","non_profit","chain","num_beds","ccrc_facility",
+                  "occupancy_rate","pct_medicare","pct_medicaid",
+                  "cm_q_state_2","cm_q_state_3","cm_q_state_4","urban")
+
+window <- -24:24
+
+df_diag <- df %>%
   mutate(
-    government_facility = as.integer(for_profit_facility == 0 & non_profit_facility == 0)
-  )
+    lhs_bad      = is.na(.data[[y]]) | (.data[[y]] <= 0),  # log() will drop these
+    es_outside   = ever_treated == 1 & !(.data[["event_time"]] %in% window),
+    es_missing   = ever_treated == 1 & is.na(event_time),
+    fe_bad       = is.na(cms_certification_number) | is.na(year_month)
+  ) %>%
+  mutate(rhs_na_any = do.call(pmax.int, c(across(all_of(controls_vec), ~ as.integer(is.na(.))), 0L)) == 1L)
 
-# --- 3. Totals across all facilities ---
-count_stats <- ccn_flags %>%
-  summarise(
-    is_chain_count       = sum(is_chain_facility, na.rm = TRUE),
-    for_profit_count     = sum(for_profit_facility, na.rm = TRUE),
-    non_profit_count     = sum(non_profit_facility, na.rm = TRUE),
-    government_count     = sum(government_facility, na.rm = TRUE),
-    ccrc_facility_count  = sum(ccrc_facility_any, na.rm = TRUE),
-    sff_facility_count   = sum(sff_facility_any, na.rm = TRUE),
-    urban_facility_count = sum(urban_facility, na.rm = TRUE)
-  )
+cat("\n--- Drop breakdown (RN example) ---\n")
+cat("Total rows: ", nrow(df_diag), "\n")
+cat("LHS bad (<=0 or NA): ", sum(df_diag$lhs_bad), "\n")
+cat("RHS NA in controls:  ", sum(df_diag$rhs_na_any), "\n")
+cat("ES outside window:   ", sum(df_diag$es_outside, na.rm=TRUE), "\n")
+cat("ES missing (treated):", sum(df_diag$es_missing, na.rm=TRUE), "\n")
+cat("FE missing:           ", sum(df_diag$fe_bad), "\n")
 
-cat("\n=== FACILITY COUNTS (by CCN) ===\n")
-print(count_stats)
+# overlaps (to see unique counts)
+cat("\nUnique dropped by RHS (any of the RHS reasons, excluding LHS): ",
+    sum(!df_diag$lhs_bad & (df_diag$rhs_na_any | df_diag$es_outside | df_diag$es_missing | df_diag$fe_bad), na.rm=TRUE), "\n")
+
+
+# (Optional sanity checks)
+# table(df$ever_treated, useNA = "ifany")
+# summary(df$event_time)
+
+# === Controls ===
+controls <- paste(
+  "government + non_profit + chain + num_beds + ccrc_facility +",
+  "occupancy_rate + pct_medicare + pct_medicaid +",
+  "cm_q_state_2 + cm_q_state_3 + cm_q_state_4 + urban"
+)
+
+# === Event-study term ===
+# Interact with EVER-TREATED (not post). Keep a symmetric window and set ref = -1.
+es_term <- "i(event_time, ever_treated, ref = -1, keep = -24:24)"
+rhs <- paste(es_term, "+", controls)
+
+# === Helper to run ES on log outcomes ===
+run_es <- function(y) {
+  fml <- as.formula(paste0("log(", y, ") ~ ", rhs, " | cms_certification_number + year_month"))
+  feols(fml, data = df, vcov = ~ cms_certification_number + year_month)
+}
+
+m_es_rn  <- run_es("rn_hppd")
+m_es_lpn <- run_es("lpn_hppd")
+m_es_cna <- run_es("cna_hppd")
+m_es_tot <- run_es("total_hppd")
+
+summary(m_es_rn)
+summary(m_es_lpn)
+summary(m_es_cna)
+summary(m_es_tot)
+
+# === Plots (now you should see negatives too) ===
+iplot(m_es_rn,  ref = -1, xlab = "Months relative to CHOW", ylab = "log RN HPPD")
+iplot(m_es_lpn, ref = -1, xlab = "Months relative to CHOW", ylab = "log LPN HPPD")
+iplot(m_es_cna, ref = -1, xlab = "Months relative to CHOW", ylab = "log CNA HPPD")
+iplot(m_es_tot, ref = -1, xlab = "Months relative to CHOW", ylab = "log Total HPPD")
+
