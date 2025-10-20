@@ -1,5 +1,5 @@
 ---
-title: "Regression Results for TWFE Model"
+title: "Regression Results for TWFE Model (log HPPD)"
 author: "Joe White"
 date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output:
@@ -21,53 +21,48 @@ options(scipen = 999, digits = 3)
 library(fixest)
 library(dplyr)
 library(readr)
+library(tidyr)
 library(modelsummary)
 ```
 
 ```{r regressions}
-# === Load updated panel ===
+# === Load panel ===
 panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/analytical_panel.csv"
 df <- read_csv(panel_fp)
 
-# (Optional) quick type hygiene for FEs if needed:
-# df <- df |>
-#   mutate(
-#     cms_certification_number = as.character(cms_certification_number)
-#     # year_month: leave as-is (Date or character both OK for FE in fixest)
-#   )
+# === Ensure positive HPPDs before logging (drop non-positive) ===
+hppd_vars <- c("rn_hppd", "lpn_hppd", "cna_hppd", "total_hppd")
+df <- df %>%
+  mutate(across(all_of(hppd_vars), ~ ifelse(. <= 0, NA, .)))
 
-# === Controls with new column names ===
+# === Controls ===
 controls <- paste(
   "government + non_profit + chain + num_beds + ccrc_facility +",
   "occupancy_rate + pct_medicare + pct_medicaid +",
   "cm_q_state_2 + cm_q_state_3 + cm_q_state_4 + urban"
 )
 
-# === Level–Level models: facility FE + month FE; 2-way clustered SEs ===
-m1 <- feols(
-  as.formula(paste("rn_hppd ~ treatment +", controls, "| cms_certification_number + year_month")),
-  data = df, vcov = ~ cms_certification_number + year_month
-)
+# === RHS (treatment + controls) ===
+rhs <- paste("treatment +", controls)
 
-m2 <- feols(
-  as.formula(paste("lpn_hppd ~ treatment +", controls, "| cms_certification_number + year_month")),
-  data = df, vcov = ~ cms_certification_number + year_month
-)
+# === Models: log outcomes, facility FE + month FE; 2-way clustered SEs ===
+m1 <- feols(as.formula(paste("log(rn_hppd) ~",    rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
 
-m3 <- feols(
-  as.formula(paste("cna_hppd ~ treatment +", controls, "| cms_certification_number + year_month")),
-  data = df, vcov = ~ cms_certification_number + year_month
-)
+m2 <- feols(as.formula(paste("log(lpn_hppd) ~",   rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
 
-m4 <- feols(
-  as.formula(paste("total_hppd ~ treatment +", controls, "| cms_certification_number + year_month")),
-  data = df, vcov = ~ cms_certification_number + year_month
-)
+m3 <- feols(as.formula(paste("log(cna_hppd) ~",   rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
+
+m4 <- feols(as.formula(paste("log(total_hppd) ~", rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
 ```
 
 ## Summary Table
 
 ```{r table, results='asis'}
+# Optional: clean coefficient labels
 cm <- c(
   "treatment"      = "Treatment",
   "government"     = "Government",
@@ -86,22 +81,22 @@ cm <- c(
 
 modelsummary(
   list(
-    "RN HPPD"    = m1,
-    "LPN HPPD"   = m2,
-    "CNA HPPD"   = m3,
-    "Total HPPD" = m4
+    "log(RN HPPD)"    = m1,
+    "log(LPN HPPD)"   = m2,
+    "log(CNA HPPD)"   = m3,
+    "log(Total HPPD)" = m4
   ),
   coef_map = cm,
   stars = TRUE,
   gof_omit = 'IC|Log|Adj|Within|Between|Overall',
   add_rows = data.frame(
     term = c("Facility FE", "Month FE", "SE type"),
-    `RN HPPD`    = c("Yes", "Yes", "2-way clustered"),
-    `LPN HPPD`   = c("Yes", "Yes", "2-way clustered"),
-    `CNA HPPD`   = c("Yes", "Yes", "2-way clustered"),
-    `Total HPPD` = c("Yes", "Yes", "2-way clustered")
+    `log(RN HPPD)`    = c("Yes", "Yes", "2-way clustered"),
+    `log(LPN HPPD)`   = c("Yes", "Yes", "2-way clustered"),
+    `log(CNA HPPD)`   = c("Yes", "Yes", "2-way clustered"),
+    `log(Total HPPD)` = c("Yes", "Yes", "2-way clustered")
   ),
-  title = 'HPPD Regressions (Level–Level)',
+  title = 'Log(HPPD) Regressions with Facility & Month FE',
   output = "markdown"
 )
 ```

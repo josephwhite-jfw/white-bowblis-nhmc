@@ -37,16 +37,20 @@ df <- df %>%
     )
   )
 
-# 3) Helper to run the ES on an outcome (levels; not logged) -----------
+# 3) Helper to run the ES on an outcome (LOGGED outcome) -----------
 run_es <- function(lhs) {
+  # drop non-positive for logs
+  df_lhs <- df %>% filter(!is.na(.data[[lhs]]), .data[[lhs]] > 0)
+  cat(sprintf("[info] %s: using %d rows after LHS>0 filter\n", lhs, nrow(df_lhs)))
+  
   feols(
     as.formula(paste0(
-      lhs, " ~ i(event_time_capped, ever_treated, ref = -1, keep = -24:24) + ",
+      "log(", lhs, ") ~ i(event_time_capped, ever_treated, ref = -1, keep = -24:24) + ",
       "government + non_profit + chain + ccrc_facility + sff_facility +",
       "cm_q_state_2 + cm_q_state_3 + cm_q_state_4 + urban",
       " | cms_certification_number + year_month"
     )),
-    data = df,
+    data = df_lhs,
     vcov = ~ cms_certification_number + year_month,
     lean = TRUE
   )
@@ -58,15 +62,15 @@ m_lpn  <- run_es("lpn_hppd")
 m_cna  <- run_es("cna_hppd")
 m_tot  <- run_es("total_hppd")
 
-cat("\n=== Event study with ONLY government & non_profit ===\n")
+cat("\n=== Event study with controls (LOGGED outcomes) ===\n")
 summary(m_rn); summary(m_lpn); summary(m_cna); summary(m_tot)
 
 # 5) Plots (limited to -24..+24) ---------------------------------------
 iplot(m_rn,  ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "RN HPPD",   main = "ES: RN")
+      xlab = "Months relative to CHOW", ylab = "log RN HPPD",   main = "ES (log): RN")
 iplot(m_lpn, ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "LPN HPPD",  main = "ES: LPN")
+      xlab = "Months relative to CHOW", ylab = "log LPN HPPD",  main = "ES (log): LPN")
 iplot(m_cna, ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "CNA HPPD",  main = "ES: CNA")
+      xlab = "Months relative to CHOW", ylab = "log CNA HPPD",  main = "ES (log): CNA")
 iplot(m_tot, ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "Total HPPD",main = "ES: Total")
+      xlab = "Months relative to CHOW", ylab = "log Total HPPD",main = "ES (log): Total")
