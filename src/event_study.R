@@ -50,10 +50,33 @@ cat("nobs rn/lpn/cna/total:\n",
     nobs(m_es_rn), nobs(m_es_lpn), nobs(m_es_cna), nobs(m_es_tot), "\n")
 
 # === Plot Event Studies ===
-iplot(m_es_rn,  ref = -1, xlab = "Months relative to CHOW", ylab = "log RN HPPD",   main = "Event Study: RN")
-iplot(m_es_lpn, ref = -1, xlab = "Months relative to CHOW", ylab = "log LPN HPPD",  main = "Event Study: LPN")
-iplot(m_es_cna, ref = -1, xlab = "Months relative to CHOW", ylab = "log CNA HPPD",  main = "Event Study: CNA")
-iplot(m_es_tot, ref = -1, xlab = "Months relative to CHOW", ylab = "log Total HPPD",main = "Event Study: Total")
+iplot(m_es_rn,
+      ref  = -1,
+      xlab = "Months relative to CHOW",
+      ylab = "log RN HPPD",
+      main = "Event Study: RN",
+      xlim = c(-24, 24))
+
+iplot(m_es_lpn,
+      ref  = -1,
+      xlab = "Months relative to CHOW",
+      ylab = "log LPN HPPD",
+      main = "Event Study: LPN",
+      xlim = c(-24, 24))
+
+iplot(m_es_cna,
+      ref  = -1,
+      xlab = "Months relative to CHOW",
+      ylab = "log CNA HPPD",
+      main = "Event Study: CNA",
+      xlim = c(-24, 24))
+
+iplot(m_es_tot,
+      ref  = -1,
+      xlab = "Months relative to CHOW",
+      ylab = "log Total HPPD",
+      main = "Event Study: Total",
+      xlim = c(-24, 24))
 
 # === Joint test of pre-trends (leads -24..-2) ===
 leads <- -24:-2
@@ -64,3 +87,14 @@ cat("RN :\n");  print(wald(m_es_rn,  H))
 cat("LPN:\n");  print(wald(m_es_lpn, H))
 cat("CNA:\n");  print(wald(m_es_cna, H))
 cat("TOT:\n");  print(wald(m_es_tot, H))
+
+summary(m_es_rn); summary(m_es_lpn); summary(m_es_cna); summary(m_es_tot)
+
+library(dplyr)
+library(ggplot2)
+treated_only <- df %>% filter(ever_treated == 1L)
+
+ggplot(treated_only, aes(x = event_time, y = total_hppd)) +
+  stat_summary(fun = mean, geom = "line") +
+  geom_vline(xintercept = -1, linetype = 2) +
+  labs(x = "Months relative to CHOW", y = "Mean Total HPPD (treated only)")
