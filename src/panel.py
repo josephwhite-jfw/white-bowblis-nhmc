@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 # -----------------------------------------------------------------------------
-# Build Final Panel (outer join) + CHOW filter + treatment/event time + case-mix
+# Build Final Panel (outer join) + CHOW filter + treatment/post/event time + case-mix
 # + date window + within-quarter fills (AFTER final panel) + gap indicator
+# Also writes an analytical panel with HPPD + hospital filters.
 # -----------------------------------------------------------------------------
 
 import os, re, warnings
@@ -25,13 +26,14 @@ PROVIDER_FP = INTERIM / "provider.csv"
 PBJ_FP      = INTERIM / "pbj_nurse.csv"
 MCR_FP      = INTERIM / "mcr.csv"
 CHOW_FP     = INTERIM / "chow.csv"
-OUT_FP      = CLEAN_DIR / "pbj_panel.csv"
+OUT_PBJ_FP  = CLEAN_DIR / "pbj_panel.csv"
+OUT_ANL_FP  = CLEAN_DIR / "analytical_panel.csv"
 
 print(f"[paths] provider={PROVIDER_FP.exists()}  pbj={PBJ_FP.exists()}  mcr={MCR_FP.exists()}  chow={CHOW_FP.exists()}")
-print(f"[out]   {OUT_FP}")
+print(f"[out]   pbj={OUT_PBJ_FP}")
+print(f"[out]   analytical={OUT_ANL_FP}")
 
 # ============================== Config ========================================
-# Restrict panel window (inclusive)
 START_YM = "2017/01"
 END_YM   = "2024/06"
 START_Q  = "2017Q1"
@@ -113,26 +115,19 @@ def make_case_mix_bins_and_dummies(panel: pd.DataFrame, cm_col: str, state_col: 
     return out
 
 def filter_to_window(df: pd.DataFrame) -> pd.DataFrame:
-    """Restrict to START_YM..END_YM and START_Q..END_Q using existing year_month/quarter strings."""
     if "year_month" in df.columns:
         ym = pd.PeriodIndex(df["year_month"].astype(str), freq="M")
         mask_ym = (ym >= pd.Period(START_YM, "M")) & (ym <= pd.Period(END_YM, "M"))
     else:
         mask_ym = pd.Series(True, index=df.index)
-
     if "quarter" in df.columns:
         q = pd.PeriodIndex(df["quarter"].astype(str), freq="Q")
         mask_q = (q >= pd.Period(START_Q, "Q")) & (q <= pd.Period(END_Q, "Q"))
     else:
         mask_q = pd.Series(True, index=df.index)
-
     return df[mask_ym & mask_q].copy()
 
 def coalesce_suffix_duplicates(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    For columns that appear as name, name.1, name.2, ...:
-      fill canonical 'name' from suffixed copies where NA, then drop suffixed.
-    """
     out = df.copy()
     cols = list(out.columns)
     suffixed = [c for c in cols if re.search(r"\.\d+$", c)]
@@ -140,33 +135,29 @@ def coalesce_suffix_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     for c in suffixed:
         base = re.sub(r"\.\d+$", "", c)
         by_base.setdefault(base, []).append(c)
-
     for base, dups in by_base.items():
         if base in out.columns:
-            # fill base from each dup in order
             for dup in dups:
                 out[base] = out[base].where(out[base].notna(), out[dup])
             out = out.drop(columns=dups)
         else:
-            # If base is missing but only suffixed exist, make base and drop dups
             out[base] = pd.NA
             for dup in dups:
                 out[base] = out[base].where(out[base].notna(), out[dup])
             out = out.drop(columns=dups)
     return out
 
-# ============================== Load sources ==================================
+# ============================== Load ==========================================
 provider = pd.read_csv(PROVIDER_FP, low_memory=False)
 pbj      = pd.read_csv(PBJ_FP,      low_memory=False)
 mcr      = pd.read_csv(MCR_FP,      low_memory=False)
 chow     = pd.read_csv(CHOW_FP,     low_memory=False)
 
-# Normalize CCNs
 for df in (provider, pbj, mcr, chow):
     if "cms_certification_number" in df.columns:
         df["cms_certification_number"] = normalize_ccn_any(df["cms_certification_number"])
 
-# ============================== Restrict window BEFORE merge ===================
+# Restrict window BEFORE merge
 provider = filter_to_window(provider)
 pbj      = filter_to_window(pbj)
 mcr      = filter_to_window(mcr)
@@ -195,46 +186,64 @@ nh_timing = chow.loc[chow["cms_certification_number"].isin(agree_ccns),
 # ============================== Outer join base ===============================
 keys = ["cms_certification_number","quarter","year_month"]
 for name, df in [("provider",provider),("pbj",pbj),("mcr",mcr)]:
-    missing = [k for k in keys if k not in df.columns]
-    if missing:
-        raise KeyError(f"[{name}] missing key columns: {missing}")
+    miss = [k for k in keys if k not in df.columns]
+    if miss:
+        raise KeyError(f"[{name}] missing key columns: {miss}")
 
 base = provider.merge(pbj, on=keys, how="outer") \
                .merge(mcr, on=keys, how="outer")
 
-# Restrict rows to CCNs that passed CHOW agreement
+# Keep only CHOW-agree CCNs
 base["cms_certification_number"] = normalize_ccn_any(base["cms_certification_number"])
 base = base[base["cms_certification_number"].isin(agree_ccns)].copy()
 
-# Attach NH timing to all rows of each CCN
+# Attach NH timing
 base = base.merge(nh_timing, on="cms_certification_number", how="left")
 
-# ============================== Treatment & Event-time ========================
-base["_month_dt"] = pd.PeriodIndex(base["year_month"].astype(str), freq="M").to_timestamp("s")
+# ============================== Time / Treatment / Post / Event-time =========
+# Global calendar month index: 2017/01 -> 1, 2017/02 -> 2, ..., 2024/06 -> T
+ym_periods = pd.PeriodIndex(base["year_month"].astype(str), freq="M")
+start_p    = pd.Period(START_YM, "M")
 
-base["treatment"] = 0
-mask_has_chow = base["n_chow_nh_compare"].eq(1) & base["first_nh_month"].notna()
-base.loc[mask_has_chow, "treatment"] = (base.loc[mask_has_chow, "_month_dt"] > base.loc[mask_has_chow, "first_nh_month"]).astype(int)
+# time: simple Period-indexed month counter (no datetime casting)
+_time_vals = (ym_periods - start_p).astype(int) + 1
+base["time"] = pd.Series(_time_vals, index=base.index, dtype="Int32")
 
-base["event_time"] = np.nan
-et_mask = base["first_nh_month"].notna()
-base.loc[et_mask, "event_time"] = (
-    (base.loc[et_mask, "_month_dt"].values.astype("datetime64[M]") -
-     base.loc[et_mask, "first_nh_month"].values.astype("datetime64[M]")).astype(int)
+# First CHOW month as Period[M] for safe month math/comparisons
+first_p = pd.to_datetime(base["first_nh_month"], errors="coerce").dt.to_period("M")
+
+# post = 1 for months strictly AFTER the CHOW month (only for CCNs with exactly one CHOW)
+base["post"] = 0
+_has_one = base["n_chow_nh_compare"].eq(1) & first_p.notna()
+base.loc[_has_one, "post"] = (ym_periods[_has_one] > first_p[_has_one]).astype("Int8")
+
+# treatment = ever treated at the CCN level (1 if n_chow_nh_compare==1 anywhere for that CCN)
+base["treatment"] = (
+    base["n_chow_nh_compare"].eq(1)
+        .groupby(base["cms_certification_number"])
+        .transform("max")
+        .astype("Int8")
 )
-base = base.drop(columns=["_month_dt"])
+
+# event_time: month distance from CHOW month (0 at CHOW month, negatives before, positives after)
+base["event_time"] = np.nan
+_etmask = first_p.notna()
+# PeriodIndex subtraction returns integer month differences directly
+base.loc[_etmask, "event_time"] = (ym_periods[_etmask] - first_p[_etmask]).astype(int)
 
 # ============================== Case-mix dummies ==============================
 if "case_mix_total" not in base.columns:
     base["case_mix_total"] = pd.NA
 base = make_case_mix_bins_and_dummies(base, cm_col="case_mix_total", state_col="state")
 
-# ============================== Build FINAL panel (column selection) ==========
+# ============================== Build FINAL panel =============================
 want_cols = [
     "cms_certification_number",
     "quarter",
     "year_month",
-    "treatment",
+    "time",
+    "treatment",   # ever treated
+    "post",        # post-CHOW (strictly after)
     "event_time",
     "provider_resides_in_hospital",
     "gap_from_prev_months",
@@ -249,20 +258,15 @@ want_cols = [
     "urban",
 ]
 
-# add all case-mix dummies present
 cm_dummy_cols_all = [c for c in base.columns if c.startswith(("cm_q_nat_","cm_d_nat_","cm_q_state_","cm_d_state_")) or
                      (c.endswith("_missing") and c.startswith(("cm_q_","cm_d_")))]
 want_cols += [c for c in cm_dummy_cols_all if c not in want_cols]
 
-# Keep only existing columns
 want_cols = [c for c in want_cols if c in base.columns]
 panel = base[want_cols].copy()
-
-# ============================== Deduplicate any ".1" columns ==================
 panel = coalesce_suffix_duplicates(panel)
 
 # ============================== Within-quarter fill (AFTER final panel) =======
-# Binary/dummies to fill within quarter (take any non-null then ffill/bfill)
 binary_quarter_fill = [
     "provider_resides_in_hospital",
     "non_profit", "government",
@@ -272,8 +276,6 @@ binary_quarter_fill = [
 ] + [c for c in panel.columns if c.startswith(("cm_q_nat_","cm_d_nat_","cm_q_state_","cm_d_state_")) or
       (c.endswith("_missing") and c.startswith(("cm_q_","cm_d_")))]
 
-# Numeric to fill within quarter (values are constant within quarter so any non-null works;
-# we’ll just ffill/bfill inside the quarter block)
 numeric_quarter_fill = [
     "num_beds",
     "occupancy_rate",
@@ -284,53 +286,54 @@ _fill_cols = [c for c in (binary_quarter_fill + numeric_quarter_fill) if c in pa
 _key_cols  = ["cms_certification_number", "quarter"]
 
 if _fill_cols:
-    # Remember original dtypes so we can restore (e.g., Int8)
     _orig_dtypes = panel[_fill_cols].dtypes.to_dict()
-
-    # One grouped transform across ALL columns: ffill then bfill within each quarter
     filled_block = (
         panel.sort_values(_key_cols + ["year_month"])
              .groupby(_key_cols, observed=True, sort=False)[_fill_cols]
              .transform(lambda df: df.ffill().bfill())
     )
-
-    # Only fill where original is NA
     panel[_fill_cols] = panel[_fill_cols].where(panel[_fill_cols].notna(), filled_block)
-
-    # Restore original dtypes where reasonable
     for c, dt in _orig_dtypes.items():
         try:
             panel[c] = panel[c].astype(dt)
         except Exception:
             pass
 
-# ============================== GAP indicator ================================
-# gap = 1 if a facility ever has gap_from_prev_months > 0
-if "gap_from_prev_months" in base.columns:
-    ever_gap = (base["gap_from_prev_months"] > 0).groupby(base["cms_certification_number"]).transform("max").astype("Int8")
-    # align to panel by index after merge-like align on CCN; fall back to compute from panel if present
-    if "gap_from_prev_months" in panel.columns:
-        # recompute on panel directly (same logic) to avoid index alignment issues
-        panel["gap"] = (panel["gap_from_prev_months"] > 0).groupby(panel["cms_certification_number"]).transform("max").astype("Int8")
-    else:
-        # if panel dropped the raw column, create NA then fill by merge on CCN
-        panel["gap"] = pd.NA
-        # temp frame for merge
-        tmp_gap = base[["cms_certification_number"]].copy()
-        tmp_gap["gap"] = ever_gap.values
-        tmp_gap = tmp_gap.drop_duplicates("cms_certification_number")
-        panel = panel.merge(tmp_gap, on="cms_certification_number", how="left")
+# ============================== GAP indicator =================================
+if "gap_from_prev_months" in panel.columns:
+    panel["gap"] = (panel["gap_from_prev_months"] > 0).groupby(panel["cms_certification_number"]).transform("max").astype("Int8")
 else:
     panel["gap"] = pd.Series([pd.NA]*len(panel), dtype="Int8")
 
-# ============================== Final types, sort, save =======================
-# Make sure dummies are Int8
-for col in ["non_profit","government","chain","urban","ccrc_facility","sff_facility","provider_resides_in_hospital","gap"]:
+# ============================== Final types, save PBJ panel ===================
+for col in ["non_profit","government","chain","urban","ccrc_facility","sff_facility",
+            "provider_resides_in_hospital","gap","post","treatment"]:
     if col in panel.columns:
         panel[col] = pd.to_numeric(panel[col], errors="coerce").astype("Int8")
 
 panel = panel.sort_values(["cms_certification_number","year_month"]).reset_index(drop=True)
-panel.to_csv(OUT_FP, index=False)
+panel.to_csv(OUT_PBJ_FP, index=False)
+print(f"[save] PBJ panel → {OUT_PBJ_FP} rows={len(panel):,} cols={panel.shape[1]}")
 
-print(f"[save] {OUT_FP} rows={len(panel):,} cols={panel.shape[1]}")
-print(panel.head(12).to_string(index=False))
+# ============================== Analytical panel ==============================
+# Mirror your cleaning script using the in-memory 'panel'
+analytical = panel.copy()
+
+# Normalize blanks to NaN (in case any string blanks exist)
+analytical = analytical.replace(r"^\s*$", np.nan, regex=True)
+
+# Drop rows with any NaN in HPPDs
+hppd_cols = [c for c in ["rn_hppd","lpn_hppd","cna_hppd","total_hppd"] if c in analytical.columns]
+if hppd_cols:
+    before = len(analytical)
+    analytical = analytical.dropna(subset=hppd_cols)
+    print(f"[filter] drop rows with NaN in any HPPD: {before:,} -> {len(analytical):,}")
+
+# Drop hospital-resident rows
+if "provider_resides_in_hospital" in analytical.columns:
+    before = len(analytical)
+    analytical = analytical[analytical["provider_resides_in_hospital"] != 1]
+    print(f"[filter] drop 'provider_resides_in_hospital'==1: {before:,} -> {len(analytical):,}")
+
+analytical.to_csv(OUT_ANL_FP, index=False)
+print(f"[done] saved analytical panel → {OUT_ANL_FP}")

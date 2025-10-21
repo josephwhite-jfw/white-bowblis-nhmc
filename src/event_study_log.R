@@ -9,7 +9,7 @@ panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/analytical_panel.csv"
 # Keep just what we need
 keep_cols <- c(
   "cms_certification_number","year_month",
-  "event_time","treatment",
+  "event_time","treatment","post",
   "government","non_profit", "chain", "ccrc_facility",
   "sff_facility", "cm_q_state_2", "cm_q_state_3",
   "cm_q_state_4", "urban",
@@ -22,17 +22,11 @@ df <- read_csv(panel_fp, show_col_types = FALSE, col_select = all_of(keep_cols))
     cms_certification_number = as.factor(cms_certification_number)
   )
 
-# 1) Ever-treated flag (treated at any point) --------------------
-df <- df %>%
-  group_by(cms_certification_number) %>%
-  mutate(ever_treated = as.integer(any(treatment == 1, na.rm = TRUE) | any(!is.na(event_time)))) %>%
-  ungroup()
-
 # 2) Sentinel-coded event time (avoid RHS NAs; show only -24..+24) ----
 df <- df %>%
   mutate(
     event_time_capped = dplyr::case_when(
-      ever_treated == 1L & !is.na(event_time) ~ pmin(pmax(event_time, -24L), 24L),
+      treatment == 1L & !is.na(event_time) ~ pmin(pmax(event_time, -24L), 24L),
       TRUE                                    ~ 9999L   # sentinel for never-treated / off-window
     )
   )
@@ -45,7 +39,7 @@ run_es <- function(lhs) {
   
   feols(
     as.formula(paste0(
-      "log(", lhs, ") ~ i(event_time_capped, ever_treated, ref = -1, keep = -24:24) + ",
+      "log(", lhs, ") ~ i(event_time_capped, treatment, ref = -1, keep = -24:24) + ",
       "government + non_profit + chain + ccrc_facility + sff_facility +",
       "cm_q_state_2 + cm_q_state_3 + cm_q_state_4 + urban",
       " | cms_certification_number + year_month"
