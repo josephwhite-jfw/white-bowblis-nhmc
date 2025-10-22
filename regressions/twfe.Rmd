@@ -1,0 +1,137 @@
+---
+title: "TWFE HPPD Results — Levels & Logs"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+fontsize: 11pt
+geometry: margin=1in
+knit: (function(inputFile, encoding) {
+  out_dir <- "C:/Repositories/white-bowblis-nhmc/outputs/tables"
+  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+  rmarkdown::render(
+    input = inputFile,
+    encoding = encoding,
+    output_format = "pdf_document",
+    output_file = file.path(out_dir, "twfe_results.pdf")
+  )
+})
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3)
+
+suppressPackageStartupMessages({
+  library(fixest)
+  library(dplyr)
+  library(readr)
+  library(modelsummary)
+  library(kableExtra)
+  library(tibble)
+})
+```
+
+```{r data_and_models}
+# Load analytical panel
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/analytical_panel.csv"
+df <- read_csv(panel_fp, show_col_types = FALSE)
+
+# Ensure IDs are characters (safer for FE)
+df <- df %>%
+  mutate(
+    cms_certification_number = as.character(cms_certification_number)
+  )
+
+# Controls: (no urban, no sff_facility)
+controls <- paste(
+  "government + non_profit + chain + num_beds + ccrc_facility +",
+  "occupancy_rate + pct_medicare + pct_medicaid +",
+  "cm_q_state_2 + cm_q_state_3 + cm_q_state_4"
+)
+
+# Helper RHS string
+rhs <- paste("treatment +", controls, "| cms_certification_number + year_month")
+
+# === LEVEL outcomes ===
+m_rn_lvl  <- feols(as.formula(paste("rn_hppd ~",    rhs)), data = df,
+                   vcov = ~ cms_certification_number + year_month)
+m_lpn_lvl <- feols(as.formula(paste("lpn_hppd ~",   rhs)), data = df,
+                   vcov = ~ cms_certification_number + year_month)
+m_cna_lvl <- feols(as.formula(paste("cna_hppd ~",   rhs)), data = df,
+                   vcov = ~ cms_certification_number + year_month)
+m_tot_lvl <- feols(as.formula(paste("total_hppd ~", rhs)), data = df,
+                   vcov = ~ cms_certification_number + year_month)
+
+# === LOG outcomes (drop non-positive) ===
+hppd_vars <- c("rn_hppd","lpn_hppd","cna_hppd","total_hppd")
+df_log <- df %>%
+  mutate(across(all_of(hppd_vars), ~ ifelse(. <= 0, NA, .)))
+
+m_rn_log  <- feols(as.formula(paste("log(rn_hppd) ~",    rhs)), data = df_log,
+                   vcov = ~ cms_certification_number + year_month)
+m_lpn_log <- feols(as.formula(paste("log(lpn_hppd) ~",   rhs)), data = df_log,
+                   vcov = ~ cms_certification_number + year_month)
+m_cna_log <- feols(as.formula(paste("log(cna_hppd) ~",   rhs)), data = df_log,
+                   vcov = ~ cms_certification_number + year_month)
+m_tot_log <- feols(as.formula(paste("log(total_hppd) ~", rhs)), data = df_log,
+                   vcov = ~ cms_certification_number + year_month)
+```
+
+```{r table, results='asis'}
+# Nice labels for coefficients
+cm <- c(
+  "treatment"      = "Treatment",
+  "government"     = "Government",
+  "non_profit"     = "Non-profit",
+  "chain"          = "Chain",
+  "num_beds"       = "Beds",
+  "ccrc_facility"  = "CCRC",
+  "occupancy_rate" = "Occupancy rate",
+  "pct_medicare"   = "% Medicare",
+  "pct_medicaid"   = "% Medicaid",
+  "cm_q_state_2"   = "Case-mix Q2 (state)",
+  "cm_q_state_3"   = "Case-mix Q3 (state)",
+  "cm_q_state_4"   = "Case-mix Q4 (state)"
+)
+
+# Only display N and R^2 in goodness-of-fit (use 'r2' for fixest)
+gm <- tribble(
+  ~raw,    ~clean, ~fmt,
+  "nobs",  "N",     0,
+  "r2",    "R^2",   3
+)
+
+# Build a single table with Level (4 cols) and Log (4 cols)
+mods <- list(
+  "RN (Level)"    = m_rn_lvl,
+  "LPN (Level)"   = m_lpn_lvl,
+  "CNA (Level)"   = m_cna_lvl,
+  "Total (Level)" = m_tot_lvl,
+  "RN (Log)"      = m_rn_log,
+  "LPN (Log)"     = m_lpn_log,
+  "CNA (Log)"     = m_cna_log,
+  "Total (Log)"   = m_tot_log
+)
+
+tab <- modelsummary(
+  mods,
+  coef_map   = cm,
+  statistic  = "std.error",
+  stars      = TRUE,
+  gof_map    = gm,
+  output     = "kableExtra",
+  title      = "Two-Way FE OLS: Levels vs Logs (SE clustered by facility & month)"
+)
+
+# Add group headers: Level vs Log
+tab %>%
+  add_header_above(c(" " = 1,
+                     "Level outcomes" = 4,
+                     "Log outcomes"   = 4)) %>%
+  kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed")) %>%
+  row_spec(0, bold = TRUE)
+```
