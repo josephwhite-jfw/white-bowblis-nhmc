@@ -10,9 +10,9 @@ panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/analytical_panel.csv"
 keep_cols <- c(
   "cms_certification_number","year_month",
   "event_time","treatment","post",
-  "government","non_profit", "chain", "ccrc_facility",
-  "sff_facility", "cm_q_state_2", "cm_q_state_3",
-  "cm_q_state_4", "urban",
+  "government","non_profit","chain","ccrc_facility",
+  "sff_facility","cm_q_state_2","cm_q_state_3",
+  "cm_q_state_4","urban",
   "rn_hppd","lpn_hppd","cna_hppd","total_hppd"
 )
 
@@ -32,15 +32,27 @@ df <- df %>%
   )
 
 # 3) Helper to run the ES on an outcome (LOGGED outcome) -----------
-run_es <- function(lhs) {
+#    Donut hole: exclude -3,-2,-1,0,1,2 by constructing keep explicitly
+run_es <- function(lhs, donut = -3:2, ref_time = -4) {
+  # keep vector for i(): all -24..24 except the donut
+  keep_vec <- setdiff(-24:24, donut)
+  
+  # sanity: make sure ref is in keep
+  if (!(ref_time %in% keep_vec)) {
+    stop(sprintf("ref_time=%d must be inside keep set.", ref_time))
+  }
+  
   # drop non-positive for logs
   df_lhs <- df %>% filter(!is.na(.data[[lhs]]), .data[[lhs]] > 0)
   cat(sprintf("[info] %s: using %d rows after LHS>0 filter\n", lhs, nrow(df_lhs)))
   
   feols(
     as.formula(paste0(
-      "log(", lhs, ") ~ i(event_time_capped, treatment, ref = -1, keep = -24:24) + ",
-      "government + non_profit + chain + ccrc_facility + sff_facility +",
+      "log(", lhs, ") ~ ",
+      "i(event_time_capped, treatment, ref = ", ref_time,
+      ", keep = c(", paste(keep_vec, collapse = ","), ")) + ",
+      # controls
+      "government + non_profit + chain + ccrc_facility + sff_facility + ",
       "cm_q_state_2 + cm_q_state_3 + cm_q_state_4 + urban",
       " | cms_certification_number + year_month"
     )),
@@ -51,20 +63,20 @@ run_es <- function(lhs) {
 }
 
 # 4) Run models ---------------------------------------------------------
-m_rn   <- run_es("rn_hppd")
-m_lpn  <- run_es("lpn_hppd")
-m_cna  <- run_es("cna_hppd")
-m_tot  <- run_es("total_hppd")
+m_rn  <- run_es("rn_hppd")
+m_lpn <- run_es("lpn_hppd")
+m_cna <- run_es("cna_hppd")
+m_tot <- run_es("total_hppd")
 
-cat("\n=== Event study with controls (LOGGED outcomes) ===\n")
+cat("\n=== Event study with controls (LOGGED outcomes; donut -3..+2; ref = -4) ===\n")
 summary(m_rn); summary(m_lpn); summary(m_cna); summary(m_tot)
 
 # 5) Plots (limited to -24..+24) ---------------------------------------
-iplot(m_rn,  ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "log RN HPPD",   main = "ES (log): RN")
-iplot(m_lpn, ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "log LPN HPPD",  main = "ES (log): LPN")
-iplot(m_cna, ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "log CNA HPPD",  main = "ES (log): CNA")
-iplot(m_tot, ref = -1, xlim = c(-24, 24),
-      xlab = "Months relative to CHOW", ylab = "log Total HPPD",main = "ES (log): Total")
+iplot(m_rn,  ref = -4, xlim = c(-24, 24),
+      xlab = "Months relative to CHOW", ylab = "log RN HPPD",    main = "ES (log): RN")
+iplot(m_lpn, ref = -4, xlim = c(-24, 24),
+      xlab = "Months relative to CHOW", ylab = "log LPN HPPD",   main = "ES (log): LPN")
+iplot(m_cna, ref = -4, xlim = c(-24, 24),
+      xlab = "Months relative to CHOW", ylab = "log CNA HPPD",   main = "ES (log): CNA")
+iplot(m_tot, ref = -4, xlim = c(-24, 24),
+      xlab = "Months relative to CHOW", ylab = "log Total HPPD", main = "ES (log): Total")
