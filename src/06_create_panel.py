@@ -611,11 +611,20 @@ if not controls_monthly.empty:
     if "num_beds" in panel.columns:
         panel["num_beds"] = pd.to_numeric(panel["num_beds"], errors="coerce")
 
-    # Ownership dummies (Govt = base)
+    # ✅ CHANGED: Ownership dummies with FOR-PROFIT as the REFERENCE
     if "ownership_type" in panel.columns:
-        panel["ownership_type"] = panel["ownership_type"].astype("string")
-        panel["for_profit"]  = (panel["ownership_type"].str.upper() == "FOR-PROFIT").astype("Int8")
-        panel["non_profit"]  = (panel["ownership_type"].str.upper() == "NONPROFIT").astype("Int8")
+        ot = panel["ownership_type"].astype("string").str.strip().str.lower()
+        # normalize minor variants
+        ot = (ot.str.replace(r"[\s_]+", "-", regex=True)
+                .str.replace(r"^non[- ]?profit$", "nonprofit", regex=True)
+                .str.replace(r"^for[- ]?profit$", "for-profit", regex=True))
+
+        panel["non_profit"] = ot.eq("nonprofit").astype("Int8")
+        panel["government"] = ot.eq("government").astype("Int8")
+
+        # drop for_profit to enforce reference category (optional but recommended)
+        if "for_profit" in panel.columns:
+            panel = panel.drop(columns=["for_profit"])
 
     post_counts = {c: int(panel[c].notna().sum()) for c in audit_cols if c in panel.columns}
     print("[controls] non-null counts (post-fill):", post_counts)
@@ -677,10 +686,11 @@ else:
 panel = panel.sort_values(["cms_certification_number","month"]).reset_index(drop=True)
 panel.to_csv(OUT_FP, index=False)
 
+# ✅ CHANGED: show non_profit + government (for_profit removed)
 cols_show = [c for c in [
     "cms_certification_number","month","agreement","change_month",
     "treat_post","event_time",
-    "ownership_type","for_profit","non_profit",
+    "ownership_type","non_profit","government",
     "pct_medicare","pct_medicaid","num_beds","occupancy_rate","state","urban_rural","urban","is_chain",
     "ccrc_facility","sff_facility","sff_class","case_mix_total_num",
     "case_mix_quartile_nat","case_mix_decile_nat","case_mix_quartile_state","case_mix_decile_state"

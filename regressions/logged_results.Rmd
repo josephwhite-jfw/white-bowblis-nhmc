@@ -1,0 +1,111 @@
+---
+title: "Regression Results for TWFE Model (log HPPD)"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+  html_document:
+    toc: false
+    df_print: paged
+fontsize: 11pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3)
+
+library(fixest)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(modelsummary)
+```
+
+```{r regressions}
+# === Load panel ===
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/analytical_panel.csv"
+df <- read_csv(panel_fp)
+
+# === Ensure positive HPPDs before logging (drop non-positive) ===
+hppd_vars <- c("rn_hppd", "lpn_hppd", "cna_hppd", "total_hppd")
+df <- df %>%
+  mutate(across(all_of(hppd_vars), ~ ifelse(. <= 0, NA, .)))
+
+# === Controls ===
+controls <- paste(
+  "government + non_profit + chain + num_beds + ccrc_facility +",
+  "occupancy_rate + pct_medicare + pct_medicaid +",
+  "cm_q_state_2 + cm_q_state_3 + cm_q_state_4 + urban"
+)
+
+# === RHS (treatment + controls) ===
+rhs <- paste("treatment +", controls)
+
+# === Models: log outcomes, facility FE + month FE; 2-way clustered SEs ===
+m1 <- feols(as.formula(paste("log(rn_hppd) ~",    rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
+
+m2 <- feols(as.formula(paste("log(lpn_hppd) ~",   rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
+
+m3 <- feols(as.formula(paste("log(cna_hppd) ~",   rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
+
+m4 <- feols(as.formula(paste("log(total_hppd) ~", rhs, "| cms_certification_number + year_month")),
+            data = df, vcov = ~ cms_certification_number + year_month)
+```
+
+## Summary Table
+
+```{r table, results='asis'}
+# Optional: clean coefficient labels
+cm <- c(
+  "treatment"      = "Treatment",
+  "government"     = "Government",
+  "non_profit"     = "Non-profit",
+  "chain"          = "Chain",
+  "num_beds"       = "Beds",
+  "ccrc_facility"  = "CCRC",
+  "occupancy_rate" = "Occupancy rate",
+  "pct_medicare"   = "% Medicare",
+  "pct_medicaid"   = "% Medicaid",
+  "cm_q_state_2"   = "Case-mix Q2 (state)",
+  "cm_q_state_3"   = "Case-mix Q3 (state)",
+  "cm_q_state_4"   = "Case-mix Q4 (state)",
+  "urban"          = "Urban"
+)
+
+modelsummary(
+  list(
+    "log(RN HPPD)"    = m1,
+    "log(LPN HPPD)"   = m2,
+    "log(CNA HPPD)"   = m3,
+    "log(Total HPPD)" = m4
+  ),
+  coef_map = cm,
+  stars = TRUE,
+  gof_omit = 'IC|Log|Adj|Within|Between|Overall',
+  add_rows = data.frame(
+    term = c("Facility FE", "Month FE", "SE type"),
+    `log(RN HPPD)`    = c("Yes", "Yes", "2-way clustered"),
+    `log(LPN HPPD)`   = c("Yes", "Yes", "2-way clustered"),
+    `log(CNA HPPD)`   = c("Yes", "Yes", "2-way clustered"),
+    `log(Total HPPD)` = c("Yes", "Yes", "2-way clustered")
+  ),
+  title = 'Log(HPPD) Regressions with Facility & Month FE',
+  output = "markdown"
+)
+```
+
+## Raw Summaries
+
+```{r raw-output, echo=TRUE}
+summary(m1)
+summary(m2)
+summary(m3)
+summary(m4)
+```
