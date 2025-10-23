@@ -1,0 +1,129 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+  11pt,
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={TWFE HPPD Results --- Levels \& Logs},
+  pdfauthor={Joe White},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{TWFE HPPD Results --- Levels \& Logs}
+\author{Joe White}
+\date{October 22, 2025}
+
+\begin{document}
+\maketitle
+
+\begin{table}
+\centering
+\begin{talltblr}[         %% tabularray outer open
+caption={Two-Way FE OLS: Levels vs Logs (SE clustered by facility \& month)},
+note{}={+ p \num{< 0.1}, * p \num{< 0.05}, ** p \num{< 0.01}, *** p \num{< 0.001}},
+]                     %% tabularray outer close
+{                     %% tabularray inner open
+colspec={Q[]Q[]Q[]Q[]Q[]Q[]Q[]Q[]Q[]},
+hline{2}={3-4,7-9}{solid, black, 0.05em},
+hline{3}={1-9}{solid, black, 0.05em},
+hline{27}={1-9}{solid, black, 0.05em},
+hline{2}={2,6}{solid, black, 0.05em, l=-0.5},
+hline{2}={5}{solid, black, 0.05em, r=-0.5},
+hline{1}={1-9}{solid, black, 0.1em},
+hline{29}={1-9}{solid, black, 0.1em},
+column{3-5,7-9}={}{halign=c},
+cell{1}{1}={}{halign=c},
+cell{1}{2}={c=4}{halign=c},
+cell{1}{6}={c=4}{halign=c},
+cell{2-28}{1}={}{halign=l},
+cell{2-28}{2}={}{halign=c},
+cell{2-28}{6}={}{halign=c},
+}                     %% tabularray inner close
+& Level outcomes &  &  &  & Log outcomes &  &  &  \\
+& RN (Level) & LPN (Level) & CNA (Level) & Total (Level) & RN (Log) & LPN (Log) & CNA (Log) & Total (Log) \\
+Treatment & \num{-0.034}*** & \num{0.007} & \num{-0.043}*** & \num{-0.070}*** & \num{-0.092}*** & \num{0.010} & \num{-0.023}*** & \num{-0.022}*** \\
+& (\num{0.005}) & (\num{0.006}) & (\num{0.010}) & (\num{0.014}) & (\num{0.016}) & (\num{0.009}) & (\num{0.005}) & (\num{0.005}) \\
+Government & \num{0.013} & \num{-0.010} & \num{-0.045}* & \num{-0.042}+ & \num{0.066}+ & \num{-0.012} & \num{-0.040}** & \num{-0.021}* \\
+& (\num{0.008}) & (\num{0.011}) & (\num{0.018}) & (\num{0.022}) & (\num{0.035}) & (\num{0.015}) & (\num{0.012}) & (\num{0.008}) \\
+Non-profit & \num{0.023}+ & \num{0.019} & \num{0.085}** & \num{0.127}*** & \num{0.082}* & \num{0.010} & \num{0.040}** & \num{0.041}** \\
+& (\num{0.014}) & (\num{0.015}) & (\num{0.026}) & (\num{0.036}) & (\num{0.036}) & (\num{0.027}) & (\num{0.014}) & (\num{0.013}) \\
+Chain & \num{0.002} & \num{-0.012}* & \num{-0.046}*** & \num{-0.056}*** & \num{0.017} & \num{-0.009} & \num{-0.022}*** & \num{-0.015}*** \\
+& (\num{0.005}) & (\num{0.006}) & (\num{0.009}) & (\num{0.012}) & (\num{0.014}) & (\num{0.008}) & (\num{0.005}) & (\num{0.004}) \\
+Beds & \num{-0.000} & \num{-0.000} & \num{-0.000} & \num{-0.000} & \num{-0.000} & \num{-0.000} & \num{-0.000} & \num{-0.000} \\
+& (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) \\
+CCRC & \num{-0.014}+ & \num{-0.000} & \num{-0.007} & \num{-0.021} & \num{-0.022} & \num{0.007} & \num{0.000} & \num{-0.004} \\
+& (\num{0.007}) & (\num{0.008}) & (\num{0.018}) & (\num{0.026}) & (\num{0.015}) & (\num{0.012}) & (\num{0.007}) & (\num{0.006}) \\
+Occupancy rate & \num{-0.002}*** & \num{-0.004}*** & \num{-0.004}*** & \num{-0.009}*** & \num{-0.003}*** & \num{-0.004}*** & \num{-0.002}*** & \num{-0.002}*** \\
+& (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.001}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) \\
+\% Medicare & \num{0.001} & \num{0.002}*** & \num{0.002}*** & \num{0.006}*** & \num{0.005}*** & \num{0.001}** & \num{0.001}** & \num{0.001}*** \\
+& (\num{0.001}) & (\num{0.000}) & (\num{0.001}) & (\num{0.001}) & (\num{0.001}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) \\
+\% Medicaid & \num{-0.000} & \num{-0.000}+ & \num{-0.001}*** & \num{-0.001}*** & \num{0.000} & \num{-0.000}** & \num{-0.000}*** & \num{-0.000}*** \\
+& (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) & (\num{0.000}) \\
+Case-mix Q2 (state) & \num{-0.004} & \num{0.001} & \num{0.009}+ & \num{0.006} & \num{0.007} & \num{0.009}** & \num{0.010}*** & \num{0.008}*** \\
+& (\num{0.003}) & (\num{0.002}) & (\num{0.005}) & (\num{0.007}) & (\num{0.005}) & (\num{0.003}) & (\num{0.002}) & (\num{0.002}) \\
+Case-mix Q3 (state) & \num{-0.005} & \num{0.004} & \num{0.026}*** & \num{0.025}* & \num{0.019}** & \num{0.015}*** & \num{0.021}*** & \num{0.018}*** \\
+& (\num{0.007}) & (\num{0.003}) & (\num{0.006}) & (\num{0.012}) & (\num{0.006}) & (\num{0.004}) & (\num{0.002}) & (\num{0.002}) \\
+Case-mix Q4 (state) & \num{-0.013} & \num{0.014}*** & \num{0.038}*** & \num{0.039} & \num{0.036}*** & \num{0.028}*** & \num{0.027}*** & \num{0.027}*** \\
+& (\num{0.022}) & (\num{0.003}) & (\num{0.008}) & (\num{0.026}) & (\num{0.008}) & (\num{0.005}) & (\num{0.003}) & (\num{0.003}) \\
+N & \num{568483} & \num{568483} & \num{568483} & \num{568483} & \num{562727} & \num{563844} & \num{567688} & \num{567948} \\
+R\textasciicircum{}2 & \num{0.033} & \num{0.398} & \num{0.197} & \num{0.076} & \num{0.683} & \num{0.659} & \num{0.626} & \num{0.613} \\
+\end{talltblr}
+\end{table}
+
+\end{document}

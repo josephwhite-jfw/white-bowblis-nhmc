@@ -9,16 +9,8 @@ output:
     number_sections: false
 fontsize: 11pt
 geometry: margin=1in
-knit: (function(inputFile, encoding) {
-  out_dir <- "C:/Repositories/white-bowblis-nhmc/outputs/tables"
-  if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
-  rmarkdown::render(
-    input = inputFile,
-    encoding = encoding,
-    output_format = "pdf_document",
-    output_file = file.path(out_dir, "twfe_results.pdf")
-  )
-})
+output_dir: "C:/Repositories/white-bowblis-nhmc/outputs/tables"
+output_file: "twfe_results.pdf"
 ---
 
 ```{r setup, include=FALSE}
@@ -30,9 +22,15 @@ suppressPackageStartupMessages({
   library(dplyr)
   library(readr)
   library(modelsummary)
-  library(kableExtra)
-  library(tibble)
+  library(tinytable)
 })
+```
+
+```{r install-tex, include=FALSE}
+if (requireNamespace("tinytex", quietly = TRUE) && tinytex::is_tinytex()) {
+  tinytex::tlmgr_install(c("tabularray"))
+  tinytex::tlmgr_update()  # make sure packages are current
+}
 ```
 
 ```{r data_and_models}
@@ -54,7 +52,7 @@ controls <- paste(
 )
 
 # Helper RHS string
-rhs <- paste("treatment +", controls, "| cms_certification_number + year_month")
+rhs <- paste("post +", controls, "| cms_certification_number + year_month")
 
 # === LEVEL outcomes ===
 m_rn_lvl  <- feols(as.formula(paste("rn_hppd ~",    rhs)), data = df,
@@ -82,9 +80,11 @@ m_tot_log <- feols(as.formula(paste("log(total_hppd) ~", rhs)), data = df_log,
 ```
 
 ```{r table, results='asis'}
+suppressPackageStartupMessages(library(tinytable))
+
 # Nice labels for coefficients
 cm <- c(
-  "treatment"      = "Treatment",
+  "post"           = "Treatment",
   "government"     = "Government",
   "non_profit"     = "Non-profit",
   "chain"          = "Chain",
@@ -98,14 +98,14 @@ cm <- c(
   "cm_q_state_4"   = "Case-mix Q4 (state)"
 )
 
-# Only display N and R^2 in goodness-of-fit (use 'r2' for fixest)
-gm <- tribble(
-  ~raw,    ~clean, ~fmt,
-  "nobs",  "N",     0,
-  "r2",    "R^2",   3
+# Only display N and R^2 (cover both possible GOF names)
+gm <- tibble::tribble(
+  ~raw,        ~clean, ~fmt,
+  "nobs",      "N",     0,
+  "r2",        "R^2",   3,
+  "r.squared", "R^2",   3
 )
 
-# Build a single table with Level (4 cols) and Log (4 cols)
 mods <- list(
   "RN (Level)"    = m_rn_lvl,
   "LPN (Level)"   = m_lpn_lvl,
@@ -123,15 +123,20 @@ tab <- modelsummary(
   statistic  = "std.error",
   stars      = TRUE,
   gof_map    = gm,
-  output     = "kableExtra",
+  output     = "tinytable",
   title      = "Two-Way FE OLS: Levels vs Logs (SE clustered by facility & month)"
 )
 
-# Add group headers: Level vs Log
-tab %>%
-  add_header_above(c(" " = 1,
-                     "Level outcomes" = 4,
-                     "Log outcomes"   = 4)) %>%
-  kable_styling(full_width = TRUE, bootstrap_options = c("striped","hover","condensed")) %>%
-  row_spec(0, bold = TRUE)
+# Add column group headers with a *named list* of indices
+if ("group_tt" %in% getNamespaceExports("tinytable")) {
+  tab <- group_tt(
+    tab,
+    j = list(
+      "Level outcomes" = 2:5,
+      "Log outcomes"   = 6:9
+    )
+  )
+}
+
+print(tab)
 ```
