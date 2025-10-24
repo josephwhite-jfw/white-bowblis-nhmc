@@ -2,6 +2,7 @@
 # coding: utf-8
 # -----------------------------------------------------------------------------
 # CMS Provider Info — Extract → Standardize (lean) → Combine (with 2Q lead)
+# Now also captures provider beds into `beds_prov` from BEDCERT / Number of Certified Beds.
 # -----------------------------------------------------------------------------
 
 import os, re, zipfile
@@ -122,6 +123,12 @@ CASE_MIX_CANDS = [
 
 CCRC_CANDS = ["ccrc_facil","continuing_care_retirement_community"]
 
+# NEW: Provider beds candidates (normalized column names)
+BEDS_PROV_CANDS = [
+    "bedcert",                    # from "BEDCERT"
+    "number_of_certified_beds",   # from "Number of Certified Beds"
+]
+
 # SFF: derive facility status from text and facility Y/N (ignore sff_flag for output)
 SFF_STATUS_TEXT_CANDS = ["special_focus_status"]     # e.g., "SFF", "SFF Candidate", "Former SFF"
 SFF_FACILITY_CANDS    = ["special_focus_facility"]   # Y/N → current
@@ -179,7 +186,7 @@ def standardize_provider_info(df: pd.DataFrame, yyyy_hint: int, mm_hint: int) ->
         primary = primary.mask(primary.isna() & df[c].notna(), df[c])
     cleaned_ccn = primary.map(clean_primary_ccn)
 
-    # Hospital flag → 0/1 Int8 (no FutureWarning)
+    # Hospital flag → 0/1 Int8
     hosp = pd.Series(pd.NA, index=df.index, dtype="object")
     for cand in HOSP_CANDIDATES:
         if cand in df.columns:
@@ -188,7 +195,7 @@ def standardize_provider_info(df: pd.DataFrame, yyyy_hint: int, mm_hint: int) ->
     hosp = hosp.astype("boolean")
     hosp01 = hosp.fillna(False).astype("Int8")
 
-    # CCRC → 0/1 Int8 (no FutureWarning)
+    # CCRC → 0/1 Int8
     ccrc_bool = pd.Series(pd.NA, index=df.index, dtype="object")
     for cand in CCRC_CANDS:
         if cand in df.columns:
@@ -197,11 +204,11 @@ def standardize_provider_info(df: pd.DataFrame, yyyy_hint: int, mm_hint: int) ->
     ccrc_bool = ccrc_bool.astype("boolean")
     ccrc01 = ccrc_bool.fillna(False).astype("Int8")
 
-    # SFF (from status text and facility Y/N only) → 0/1 Int8
+    # SFF → 0/1 Int8 based on text/facility
     sff_status_text = None
     for cand in SFF_STATUS_TEXT_CANDS:
-        if c in df.columns:
-            sff_status_text = df[c]
+        if cand in df.columns:
+            sff_status_text = df[cand]
             break
     sff_text_cls = pd.Series(pd.NA, index=df.index, dtype="object")
     if sff_status_text is not None:
@@ -215,11 +222,18 @@ def standardize_provider_info(df: pd.DataFrame, yyyy_hint: int, mm_hint: int) ->
     sff_facility_bool = sff_facility_bool.astype("boolean")
     sff01 = coalesce_sff_class(sff_text_cls, sff_facility_bool).isin(["current","candidate"]).astype("Int8")
 
-    # Case-mix (verbatim) — first non-null among candidates
+    # Case-mix (verbatim)
     case_mix = pd.Series(pd.NA, index=df.index, dtype="object")
     for cand in CASE_MIX_CANDS:
         if cand in df.columns:
             case_mix = case_mix.mask(case_mix.isna() & df[cand].notna(), df[cand])
+
+    # NEW: Provider beds (first non-null among candidates), numeric
+    beds_prov = pd.Series(pd.NA, index=df.index, dtype="object")
+    for cand in BEDS_PROV_CANDS:
+        if cand in df.columns:
+            beds_prov = beds_prov.mask(beds_prov.isna() & df[cand].notna(), df[cand])
+    beds_prov = pd.to_numeric(beds_prov, errors="coerce")  # keep as numeric; dtype finalized in combine
 
     # Period fields from file contents
     quarter    = f"{yyyy_use:04d}Q{(mm_use - 1)//3 + 1}"
@@ -233,6 +247,7 @@ def standardize_provider_info(df: pd.DataFrame, yyyy_hint: int, mm_hint: int) ->
         "ccrc_facility": ccrc01,
         "sff_facility": sff01,
         "case_mix_total": case_mix,
+        "beds_prov": beds_prov,   # <-- NEW
     })
 
     # drop invalid CCN & duplicates
@@ -292,6 +307,9 @@ def combine_monthlies_and_save():
             for col in ["provider_resides_in_hospital","ccrc_facility","sff_facility"]:
                 if col in df.columns:
                     df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("Int8")
+            # ensure beds_prov is numeric (nullable int if possible)
+            if "beds_prov" in df.columns:
+                df["beds_prov"] = pd.to_numeric(df["beds_prov"], errors="coerce").astype("Int64")
             frames.append(df)
         except Exception as e:
             print(f"[warn] failed reading {p.name}: {e}")
@@ -307,8 +325,9 @@ def combine_monthlies_and_save():
         "ccrc_facility",
         "sff_facility",
         "case_mix_total",
+        "beds_prov",  # <-- NEW in combined provider panel
     ]
-    prov = prov[keep_cols]
+    prov = prov[[c for c in keep_cols if c in prov.columns]]
 
     # --- strict sanity: drop rows missing essentials
     prov = prov.dropna(subset=["cms_certification_number","quarter","year_month"])
@@ -323,10 +342,11 @@ def combine_monthlies_and_save():
 
     # --- sort then apply 2-quarter (6-month) LEAD to case_mix_total by CCN
     prov = prov.sort_values(["cms_certification_number","_ord"], kind="mergesort")
-    prov["case_mix_total"] = (
-        prov.groupby("cms_certification_number", sort=False)["case_mix_total"]
-            .shift(-6)   # for each month t, take value from t+6 months
-    )
+    if "case_mix_total" in prov.columns:
+        prov["case_mix_total"] = (
+            prov.groupby("cms_certification_number", sort=False)["case_mix_total"]
+                .shift(-6)   # for each month t, take value from t+6 months
+        )
 
     # --- finalize
     prov = (prov

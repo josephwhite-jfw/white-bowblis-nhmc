@@ -200,36 +200,38 @@ base = base[base["cms_certification_number"].isin(agree_ccns)].copy()
 # Attach NH timing
 base = base.merge(nh_timing, on="cms_certification_number", how="left")
 
-# ============================== Time / Treatment / Post / Event-time =========
-# Global calendar month index: 2017/01 -> 1, 2017/02 -> 2, ..., 2024/06 -> T
+# ============================== Treatment / Post / Event-time =================
 ym_periods = pd.PeriodIndex(base["year_month"].astype(str), freq="M")
-start_p    = pd.Period(START_YM, "M")
 
-# time: simple Period-indexed month counter (no datetime casting)
-_time_vals = (ym_periods - start_p).astype(int) + 1
-base["time"] = pd.Series(_time_vals, index=base.index, dtype="Int32")
-
-# First CHOW month as Period[M] for safe month math/comparisons
+# First CHOW month as Period[M]
 first_p = pd.to_datetime(base["first_nh_month"], errors="coerce").dt.to_period("M")
-
-# post = 1 for months strictly AFTER the CHOW month (only for CCNs with exactly one CHOW)
-base["post"] = 0
-_has_one = base["n_chow_nh_compare"].eq(1) & first_p.notna()
-base.loc[_has_one, "post"] = (ym_periods[_has_one] > first_p[_has_one]).astype("Int8")
 
 # treatment = ever treated at the CCN level (1 if n_chow_nh_compare==1 anywhere for that CCN)
 base["treatment"] = (
     base["n_chow_nh_compare"].eq(1)
         .groupby(base["cms_certification_number"])
         .transform("max")
-        .astype("Int8")
+        .astype(int)
 )
 
-# event_time: month distance from CHOW month (0 at CHOW month, negatives before, positives after)
+# Robust month-difference calculation
 base["event_time"] = np.nan
-_etmask = first_p.notna()
-# PeriodIndex subtraction returns integer month differences directly
-base.loc[_etmask, "event_time"] = (ym_periods[_etmask] - first_p[_etmask]).astype(int)
+mask = first_p.notna()
+ym_y = pd.Series(ym_periods.year,  index=base.index)
+ym_m = pd.Series(ym_periods.month, index=base.index)
+fp_y = first_p.dt.year
+fp_m = first_p.dt.month
+et_vals = (ym_y[mask] - fp_y[mask]) * 12 + (ym_m[mask] - fp_m[mask])
+base.loc[mask, "event_time"] = et_vals.astype(int)
+
+# post = 1 for months strictly AFTER the CHOW month (uses event_time > 0)
+base["post"] = 0
+has_one = base["n_chow_nh_compare"].eq(1) & mask
+base.loc[has_one, "post"] = (base.loc[has_one, "event_time"] > 0).astype(int)
+
+# anticipation dummy = 1 for event_time in {-3,-2,-1,0,1,2}
+base["anticipation"] = 0
+base.loc[base["event_time"].isin([-3, -2, -1, 0, 1, 2]), "anticipation"] = 1
 
 # ============================== Case-mix dummies ==============================
 if "case_mix_total" not in base.columns:
@@ -241,10 +243,10 @@ want_cols = [
     "cms_certification_number",
     "quarter",
     "year_month",
-    "time",
-    "treatment",   # ever treated
-    "post",        # post-CHOW (strictly after)
+    "treatment",
+    "post",
     "event_time",
+    "anticipation",
     "provider_resides_in_hospital",
     "gap_from_prev_months",
     "coverage_ratio",
@@ -252,6 +254,7 @@ want_cols = [
     "non_profit","government",
     "chain",
     "num_beds",
+    "beds_prov",                 # <-- NEW: provider-file beds
     "ccrc_facility","sff_facility",
     "occupancy_rate",
     "pct_medicare","pct_medicaid",
@@ -278,6 +281,7 @@ binary_quarter_fill = [
 
 numeric_quarter_fill = [
     "num_beds",
+    "beds_prov",
     "occupancy_rate",
     "pct_medicare","pct_medicaid",
 ]
@@ -293,11 +297,28 @@ if _fill_cols:
              .transform(lambda df: df.ffill().bfill())
     )
     panel[_fill_cols] = panel[_fill_cols].where(panel[_fill_cols].notna(), filled_block)
+    # restore original dtypes where possible; ensure beds_prov numeric/nullable int
     for c, dt in _orig_dtypes.items():
         try:
-            panel[c] = panel[c].astype(dt)
+            if c == "beds_prov":
+                panel[c] = pd.to_numeric(panel[c], errors="coerce").astype("Int64")
+            else:
+                panel[c] = panel[c].astype(dt)
         except Exception:
             pass
+
+# ============================== Unified 'beds' variable ======================
+if {"num_beds", "beds_prov"}.issubset(panel.columns):
+    panel["beds"] = panel["num_beds"].where(panel["num_beds"].notna(), panel["beds_prov"])
+    panel["beds"] = pd.to_numeric(panel["beds"], errors="coerce").astype("Int64")
+else:
+    # if one source missing, just carry whichever exists
+    if "num_beds" in panel.columns:
+        panel["beds"] = pd.to_numeric(panel["num_beds"], errors="coerce").astype("Int64")
+    elif "beds_prov" in panel.columns:
+        panel["beds"] = pd.to_numeric(panel["beds_prov"], errors="coerce").astype("Int64")
+    else:
+        panel["beds"] = pd.Series([pd.NA]*len(panel), dtype="Int64")
 
 # ============================== GAP indicator =================================
 if "gap_from_prev_months" in panel.columns:
@@ -307,19 +328,20 @@ else:
 
 # ============================== Final types, save PBJ panel ===================
 for col in ["non_profit","government","chain","urban","ccrc_facility","sff_facility",
-            "provider_resides_in_hospital","gap","post","treatment"]:
+            "provider_resides_in_hospital","gap","post","treatment","anticipation"]:
     if col in panel.columns:
         panel[col] = pd.to_numeric(panel[col], errors="coerce").astype("Int8")
+
+# ensure beds_prov is numeric/nullable int even if not filled above
+if "beds_prov" in panel.columns:
+    panel["beds_prov"] = pd.to_numeric(panel["beds_prov"], errors="coerce").astype("Int64")
 
 panel = panel.sort_values(["cms_certification_number","year_month"]).reset_index(drop=True)
 panel.to_csv(OUT_PBJ_FP, index=False)
 print(f"[save] PBJ panel → {OUT_PBJ_FP} rows={len(panel):,} cols={panel.shape[1]}")
 
 # ============================== Analytical panel ==============================
-# Mirror your cleaning script using the in-memory 'panel'
 analytical = panel.copy()
-
-# Normalize blanks to NaN (in case any string blanks exist)
 analytical = analytical.replace(r"^\s*$", np.nan, regex=True)
 
 # Drop rows with any NaN in HPPDs

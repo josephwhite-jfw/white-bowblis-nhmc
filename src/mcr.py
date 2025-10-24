@@ -104,7 +104,6 @@ def chain_from_homeoffice(val):
         return 1
     if s in {"N","NO","0","F","FALSE",""}:
         return 0
-    # last resort: numeric check
     try:
         f = float(s)
         return int(f != 0.0)
@@ -125,21 +124,20 @@ except Exception:
         print("[read] pyreadstat not available; falling back to CSV-only")
     use_sas = False
 
-# Canonical targets (we derive chain ONLY from MCR_homeoffice)
+# Canonical targets (STRICT to provided names)
 TARGET_SETS = dict(
-    PRVDR_NUM     = ["PRVDR_NUM","provnum","prvdr_num","Provider Number"],
-    FY_BGN_DT     = ["FY_BGN_DT","fy_bgn_dt","Cost Report Fiscal Year beginning date"],
-    FY_END_DT     = ["FY_END_DT","fy_end_dt","Cost Report Fiscal Year ending date"],
-    MRC_OWNERSHIP = ["MRC_OWNERSHIP","mrc_ownership","MRC_ownership","MRC_ownership_code"],
-    PAT_DAYS_TOT  = ["S3_1_PATDAYS_TOTAL","PATDAYS_TOTAL","PATIENT_DAYS_TOTAL"],
-    PAT_DAYS_MCR  = ["S3_1_PATDAYS_MEDICARE","PATDAYS_MEDICARE","PATIENT_DAYS_MEDICARE"],
-    PAT_DAYS_MCD  = ["S3_1_PATDAYS_MEDICAID","PATDAYS_MEDICAID","PATIENT_DAYS_MEDICAID"],
-    BEDDAYS_AVAIL = ["S3_1_BEDDAYS_AVAL","BEDDAYS_AVAL","S3_1_BED_DAYS_AVAIL","BED_DAYS_AVAIL"],
-    TOT_BEDS      = ["S3_1_TOTALBEDS","TOTAL_BEDS","TOT_BEDS","BEDS","S3_1_BEDS"],
-    AVG_BEDS      = ["AVG_BEDS","AVERAGE_BEDS","AVG_INPT_BEDS","S3_1_AVG_BEDS"],
-    STATE         = ["MCR_STATE","STATE","PROV_STATE","STATE_CD","PROV_STATE_CD"],
-    URBAN         = ["MCR_URBAN","URBAN_RURAL","URBAN_RURAL_INDICATOR","URBAN_IND","URBAN","URBRUR"],
-    MCR_homeoffice = ["MCR_homeoffice"]  # <- chain source ONLY (exact name, case-insensitive lookup)
+    PRVDR_NUM      = ["PRVDR_NUM","provnum","prvdr_num","Provider Number"],
+    FY_BGN_DT      = ["FY_BGN_DT","fy_bgn_dt","Cost Report Fiscal Year beginning date"],
+    FY_END_DT      = ["FY_END_DT","fy_end_dt","Cost Report Fiscal Year ending date"],
+    MRC_OWNERSHIP  = ["MRC_OWNERSHIP"],
+    PAT_DAYS_TOT   = ["S3_1_patdays_total","S3_1_PATDAYS_TOTAL"],
+    PAT_DAYS_MCR   = ["S3_1_patdays_medicare","S3_1_PATDAYS_MEDICARE"],
+    PAT_DAYS_MCD   = ["S3_1_patdays_medicaid","S3_1_PATDAYS_MEDICAID"],
+    BEDDAYS_AVAIL  = ["S3_1_beddays_aval","S3_1_BEDDAYS_AVAL"],
+    TOT_BEDS       = ["S3_1_beds","S3_1_BEDS"],
+    STATE          = ["MCR_STATE"],
+    URBAN          = ["MCR_URBAN"],
+    MCR_homeoffice = ["MCR_homeoffice"]
 )
 
 def read_one_file(fp: Path) -> pd.DataFrame:
@@ -171,10 +169,9 @@ def read_one_file(fp: Path) -> pd.DataFrame:
     essentials = ["PRVDR_NUM","FY_BGN_DT","FY_END_DT"]
     for k in essentials:
         if k not in actual:
-            # create NA columns later if missing
             actual[k] = None
 
-    # Build a single-pass selection list (avoid fragmentation)
+    # Build a single-pass selection list
     select_cols_actual = [c for c in actual.values() if c is not None]
     if fp.suffix.lower() in {".sas7bdat", ".xpt"} and use_sas:
         if fp.suffix.lower() == ".sas7bdat":
@@ -194,7 +191,7 @@ def read_one_file(fp: Path) -> pd.DataFrame:
     rename_map = {actual[k]: k for k in actual if actual[k] is not None}
     df = df.rename(columns=rename_map)
 
-    # Add any missing essentials as NA columns
+    # Add any missing targets as NA columns (keeps downstream code untouched)
     for k in TARGET_SETS.keys():
         if k not in df.columns:
             df[k] = pd.NA
@@ -214,7 +211,8 @@ raw["cms_certification_number"] = normalize_ccn_any(raw["PRVDR_NUM"])
 raw["FY_BGN_DT"] = pd.to_datetime(raw["FY_BGN_DT"], errors="coerce")
 raw["FY_END_DT"] = pd.to_datetime(raw["FY_END_DT"], errors="coerce")
 
-for c in ["PAT_DAYS_TOT","PAT_DAYS_MCR","PAT_DAYS_MCD","BEDDAYS_AVAIL","AVG_BEDS","TOT_BEDS"]:
+# Only coerce the strict variables we use
+for c in ["PAT_DAYS_TOT","PAT_DAYS_MCR","PAT_DAYS_MCD","BEDDAYS_AVAIL","TOT_BEDS"]:
     raw[c] = pd.to_numeric(raw[c], errors="coerce")
 
 raw["ownership_type"] = raw["MRC_OWNERSHIP"].map(map_ownership_bucket)
@@ -227,18 +225,8 @@ raw["urban"] = raw["URBAN"].apply(norm_urban).astype("Int8")
 # Chain ONLY from MCR_homeoffice
 raw["chain"] = raw["MCR_homeoffice"].apply(chain_from_homeoffice).astype("Int8")
 
-# Beds
-raw["num_beds"] = np.select(
-    [
-        raw["TOT_BEDS"].notna(),
-        raw["AVG_BEDS"].notna(),
-    ],
-    [
-        raw["TOT_BEDS"],
-        raw["AVG_BEDS"],
-    ],
-    default=np.nan
-)
+# Beds (from S3_1_BEDS only)
+raw["num_beds"] = raw["TOT_BEDS"]
 
 # Occupancy rate (primary + fallback)
 fy_days = (raw["FY_END_DT"] - raw["FY_BGN_DT"]).dt.days.add(1).where(lambda s: s > 0)
@@ -285,13 +273,13 @@ monthly = (pd.concat(rows, ignore_index=True)
                "num_beds","occupancy_rate","pct_medicare","pct_medicaid","ownership_type"
            ]))
 
-# Deduplicate overlaps within CCN×month
+# Deduplicate overlaps within CCN×month (same behavior as before)
 monthly = (monthly.sort_values(["cms_certification_number","month"])
                  .groupby(["cms_certification_number","month"], as_index=False)
                  .agg({
                      "state":          lambda s: s.dropna().iloc[0] if s.dropna().size else pd.NA,
-                     "urban":          "max",   # if any source says urban=1 for that month, keep it
-                     "chain":          "max",   # if any source says chain=1 for that month, keep it
+                     "urban":          "max",
+                     "chain":          "max",
                      "num_beds":       "mean",
                      "occupancy_rate": "mean",
                      "pct_medicare":   "mean",
