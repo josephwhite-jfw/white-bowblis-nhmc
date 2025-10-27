@@ -4,7 +4,7 @@ library(readr)
 library(tidyr)
 
 # === Load panel ===
-panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/analytical_panel.csv"
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
 df <- read_csv(panel_fp)
 
 # === Model formula components ===

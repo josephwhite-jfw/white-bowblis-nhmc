@@ -49,10 +49,6 @@ def normalize_ccn_any(series: pd.Series) -> pd.Series:
     return s
 
 def find_col_case_insensitive(cols, candidates):
-    """
-    Return the actual case-sensitive col name for the first candidate matched case-insensitively.
-    candidates can be a str or list[str].
-    """
     targets = [candidates] if isinstance(candidates, str) else list(candidates)
     lower_map = {c.lower().strip(): c for c in cols}
     for cand in targets:
@@ -142,14 +138,12 @@ TARGET_SETS = dict(
 
 def read_one_file(fp: Path) -> pd.DataFrame:
     if fp.suffix.lower() in {".sas7bdat", ".xpt"} and use_sas:
-        # metadata-only to resolve actual names without reading data
         if fp.suffix.lower() == ".sas7bdat":
             _, meta = pyreadstat.read_sas7bdat(fp, metadataonly=True)
         else:
             _, meta = pyreadstat.read_xport(fp, metadataonly=True)
         cols = list(meta.column_names)
     else:
-        # minimal read to peek columns
         if fp.suffix.lower() == ".csv":
             head = pd.read_csv(fp, nrows=0, low_memory=False)
             cols = list(head.columns)
@@ -158,20 +152,17 @@ def read_one_file(fp: Path) -> pd.DataFrame:
             head = pd.read_sas(fp, format=fmt, encoding="latin1", nrows=1)
             cols = list(head.columns)
 
-    # Resolve actual column names (case-insensitive)
     actual = {}
     for key, cand in TARGET_SETS.items():
         nm = find_col_case_insensitive(cols, cand)
         if nm is not None:
             actual[key] = nm
 
-    # Ensure we have at least the essential fields
     essentials = ["PRVDR_NUM","FY_BGN_DT","FY_END_DT"]
     for k in essentials:
         if k not in actual:
             actual[k] = None
 
-    # Build a single-pass selection list
     select_cols_actual = [c for c in actual.values() if c is not None]
     if fp.suffix.lower() in {".sas7bdat", ".xpt"} and use_sas:
         if fp.suffix.lower() == ".sas7bdat":
@@ -187,11 +178,9 @@ def read_one_file(fp: Path) -> pd.DataFrame:
             if select_cols_actual:
                 df = df[select_cols_actual].copy()
 
-    # Rename to canonical keys (our desired names as dict keys)
     rename_map = {actual[k]: k for k in actual if actual[k] is not None}
     df = df.rename(columns=rename_map)
 
-    # Add any missing targets as NA columns (keeps downstream code untouched)
     for k in TARGET_SETS.keys():
         if k not in df.columns:
             df[k] = pd.NA
@@ -204,14 +193,13 @@ if not files:
     raise FileNotFoundError(f"No MCR flatfiles found in {MCR_DIR}")
 
 frames = [read_one_file(fp) for fp in files]
-raw = pd.concat(frames, ignore_index=True, sort=False).copy()  # single concat (defragment)
+raw = pd.concat(frames, ignore_index=True, sort=False).copy()
 
 # ============================== Normalize & Types =============================
 raw["cms_certification_number"] = normalize_ccn_any(raw["PRVDR_NUM"])
 raw["FY_BGN_DT"] = pd.to_datetime(raw["FY_BGN_DT"], errors="coerce")
 raw["FY_END_DT"] = pd.to_datetime(raw["FY_END_DT"], errors="coerce")
 
-# Only coerce the strict variables we use
 for c in ["PAT_DAYS_TOT","PAT_DAYS_MCR","PAT_DAYS_MCD","BEDDAYS_AVAIL","TOT_BEDS"]:
     raw[c] = pd.to_numeric(raw[c], errors="coerce")
 
@@ -228,7 +216,65 @@ raw["chain"] = raw["MCR_homeoffice"].apply(chain_from_homeoffice).astype("Int8")
 # Beds (from S3_1_BEDS only)
 raw["num_beds"] = raw["TOT_BEDS"]
 
-# Occupancy rate (primary + fallback)
+# ============================== OUTLIER / MANUAL CORRECTIONS ==================
+# Helpers for period overlap with FY rows
+def _ts_month_start(ym: str) -> pd.Timestamp:
+    return pd.Period(ym, "M").to_timestamp("s")
+
+def _ts_month_end(ym: str) -> pd.Timestamp:
+    return pd.Period(ym, "M").to_timestamp("s") + pd.offsets.MonthEnd(0)
+
+def apply_value_corrections(df: pd.DataFrame, corrections: list[dict]) -> int:
+    """
+    Each correction is a dict:
+      {"ccn":"015417", "start":"2018/04", "end":"2019/04", "col":"num_beds", "value":75}
+    Applied at the FY-row level if [FY_BGN_DT .. FY_END_DT] overlaps [start..end].
+    Returns number of rows updated.
+    """
+    total = 0
+    for item in corrections:
+        ccn = str(item["ccn"])
+        col = str(item["col"])
+        start, end = item["start"], item["end"]
+        val = item["value"]
+        ccn_norm = normalize_ccn_any(pd.Series([ccn])).iloc[0]
+        s_ts, e_ts = _ts_month_start(start), _ts_month_end(end)
+        m = (
+            df["cms_certification_number"].eq(ccn_norm) &
+            df["FY_BGN_DT"].notna() & df["FY_END_DT"].notna() &
+            (df["FY_BGN_DT"] <= e_ts) & (df["FY_END_DT"] >= s_ts)
+        )
+        if m.any():
+            df.loc[m, col] = val
+            total += int(m.sum())
+    return total
+
+# (A) Current hard-coded corrections for beds
+CORR_BEDS = [
+    {"ccn":"015417", "start":"2018/04", "end":"2019/04", "col":"num_beds", "value": 75},
+    {"ccn":"056337", "start":"2017/01", "end":"2017/12", "col":"num_beds", "value":142},
+    {"ccn":"105782", "start":"2017/01", "end":"2017/12", "col":"num_beds", "value":120},
+    {"ccn":"135080", "start":"2018/01", "end":"2019/12", "col":"num_beds", "value": 60},
+    {"ccn":"145816", "start":"2024/01", "end":"2024/06", "col":"num_beds", "value":203},
+    {"ccn":"235022", "start":"2019/01", "end":"2019/12", "col":"num_beds", "value": 92},
+    {"ccn":"235157", "start":"2021/01", "end":"2021/12", "col":"num_beds", "value":104},
+    {"ccn":"235638", "start":"2019/01", "end":"2019/12", "col":"num_beds", "value": 77},
+    {"ccn":"425129", "start":"2020/04", "end":"2020/12", "col":"num_beds", "value":108},
+]
+
+updated_beds = apply_value_corrections(raw, CORR_BEDS)
+print(f"[beds corrections] updated FY rows: {updated_beds}")
+
+# (B) PLACEHOLDER: corrections to raw input fields (e.g., PAT_DAYS_TOT, BEDDAYS_AVAIL, etc.)
+CORR_INPUTS = [
+    # Example:
+    # {"ccn":"123456", "start":"2020/01", "end":"2020/03", "col":"PAT_DAYS_TOT", "value": 9999},
+]
+updated_inputs = apply_value_corrections(raw, CORR_INPUTS)
+if updated_inputs:
+    print(f"[input corrections] updated FY rows: {updated_inputs}")
+
+# Occupancy rate (primary + fallback) — runs AFTER beds corrections
 fy_days = (raw["FY_END_DT"] - raw["FY_BGN_DT"]).dt.days.add(1).where(lambda s: s > 0)
 primary = np.where(
     raw["PAT_DAYS_TOT"].notna() & raw["BEDDAYS_AVAIL"].notna() & (raw["BEDDAYS_AVAIL"] > 0),
@@ -245,6 +291,16 @@ raw["occupancy_rate"] = pd.to_numeric(np.where(np.isnan(primary), fallback, prim
 # Shares
 raw["pct_medicare"] = _share(raw["PAT_DAYS_MCR"], raw["PAT_DAYS_TOT"]).clip(0, 100)
 raw["pct_medicaid"] = _share(raw["PAT_DAYS_MCD"], raw["PAT_DAYS_TOT"]).clip(0, 100)
+
+# (C) PLACEHOLDER: corrections to derived outputs (e.g., num_beds, occupancy_rate, pct_* , urban/chain/state)
+CORR_DERIVED = [
+    # Example:
+    # {"ccn":"123456", "start":"2021/05", "end":"2021/07", "col":"occupancy_rate", "value": 88.0},
+    # {"ccn":"123456", "start":"2021/05", "end":"2021/07", "col":"pct_medicare",   "value": 55.0},
+]
+updated_derived = apply_value_corrections(raw, CORR_DERIVED)
+if updated_derived:
+    print(f"[derived corrections] updated FY rows: {updated_derived}")
 
 # ============================== Expand to Monthly =============================
 eligible = raw.dropna(subset=["cms_certification_number","FY_BGN_DT","FY_END_DT"]).copy()

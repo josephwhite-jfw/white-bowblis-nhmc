@@ -1,0 +1,210 @@
+---
+title: "TWFE HPPD Results — Levels & Logs (Split Tables)"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+fontsize: 11pt
+geometry: margin=1in
+header-includes:
+  - \usepackage{booktabs}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3)
+options(fixest_nthreads = 4)
+
+suppressPackageStartupMessages({
+  library(fixest)
+  library(dplyr)
+  library(readr)
+})
+```
+
+```{r data, cache=FALSE}
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
+
+needed <- c(
+  "cms_certification_number","year_month","anticipation","post",
+  "rn_hppd","lpn_hppd","cna_hppd","total_hppd",
+  "government","non_profit","chain","beds",
+  "occupancy_rate","pct_medicare","pct_medicaid",
+  "cm_q_state_2","cm_q_state_3","cm_q_state_4"
+)
+
+df  <- readr::read_csv(panel_fp, show_col_types = FALSE, col_select = all_of(needed))
+df2 <- dplyr::filter(df, anticipation == 0)
+
+mk_log <- function(x) ifelse(x > 0, log(x), NA_real_)
+df  <- dplyr::mutate(df,
+              ln_rn    = mk_log(rn_hppd),
+              ln_lpn   = mk_log(lpn_hppd),
+              ln_cna   = mk_log(cna_hppd),
+              ln_total = mk_log(total_hppd))
+df2 <- dplyr::mutate(df2,
+              ln_rn    = mk_log(rn_hppd),
+              ln_lpn   = mk_log(lpn_hppd),
+              ln_cna   = mk_log(cna_hppd),
+              ln_total = mk_log(total_hppd))
+```
+
+```{r models, cache=FALSE}
+controls <- paste(
+  "government + non_profit + chain + beds +",
+  "occupancy_rate + pct_medicare + pct_medicaid +",
+  "cm_q_state_2 + cm_q_state_3 + cm_q_state_4"
+)
+rhs <- paste("post +", controls, "| cms_certification_number + year_month")
+
+run_models <- function(data) {
+  outcomes_lvl <- c("rn_hppd","lpn_hppd","cna_hppd","total_hppd")
+  outcomes_log <- c("ln_rn","ln_lpn","ln_cna","ln_total")
+  models <- list()
+  for (i in seq_along(outcomes_lvl)) {
+    y1 <- outcomes_lvl[i]; y2 <- outcomes_log[i]
+    f1 <- as.formula(paste(y1, "~", rhs))
+    f2 <- as.formula(paste(y2, "~", rhs))
+    models[[paste0(y1, "_lvl")]] <- feols(f1, data = data, vcov = ~ cms_certification_number + year_month)
+    models[[paste0(y1, "_log")]] <- feols(f2, data = data, vcov = ~ cms_certification_number + year_month)
+  }
+  models
+}
+
+mods_full <- run_models(df)
+mods_noan <- run_models(df2)
+
+# Build four named lists so headers are exactly as desired
+full_levels <- list(
+  "RN"    = mods_full[["rn_hppd_lvl"]],
+  "LPN"   = mods_full[["lpn_hppd_lvl"]],
+  "CNA"   = mods_full[["cna_hppd_lvl"]],
+  "Total" = mods_full[["total_hppd_lvl"]]
+)
+full_logs <- list(
+  "Log~RN"    = mods_full[["rn_hppd_log"]],
+  "Log~LPN"   = mods_full[["lpn_hppd_log"]],
+  "Log~CNA"   = mods_full[["cna_hppd_log"]],
+  "Log~Total" = mods_full[["total_hppd_log"]]
+)
+noan_levels <- list(
+  "RN"    = mods_noan[["rn_hppd_lvl"]],
+  "LPN"   = mods_noan[["lpn_hppd_lvl"]],
+  "CNA"   = mods_noan[["cna_hppd_lvl"]],
+  "Total" = mods_noan[["total_hppd_lvl"]]
+)
+noan_logs <- list(
+  "Log~RN"    = mods_noan[["rn_hppd_log"]],
+  "Log~LPN"   = mods_noan[["lpn_hppd_log"]],
+  "Log~CNA"   = mods_noan[["cna_hppd_log"]],
+  "Log~Total" = mods_noan[["total_hppd_log"]]
+)
+
+# Coefficient label dictionary
+coef_dict <- c(
+  post            = "Treatment",
+  government      = "Government",
+  non_profit      = "Non-profit",
+  chain           = "Chain",
+  beds            = "Beds",
+  occupancy_rate  = "Occupancy rate",
+  pct_medicare    = "% Medicare",
+  pct_medicaid    = "% Medicaid",
+  cm_q_state_2    = "Case-mix Q2 (state)",
+  cm_q_state_3    = "Case-mix Q3 (state)",
+  cm_q_state_4    = "Case-mix Q4 (state)"
+)
+
+# Common options for etable
+style_tex <- fixest::style.tex("aer")
+sig_vec   <- c("***"=0.01,"**"=0.05,"*"=0.10)
+keep_vec  <- paste0("%", c(
+  "post","government","non_profit","chain","beds",
+  "occupancy_rate","pct_medicare","pct_medicaid",
+  "cm_q_state_2","cm_q_state_3","cm_q_state_4"
+))
+```
+
+## With Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+
+```{r t1_levels, results='asis'}
+# With Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+fixest::etable(
+  full_levels,
+  headers      = c("RN","LPN","CNA","Total"),   # <= force column headers
+  dict         = coef_dict,
+  keep         = keep_vec,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = "Two-Way FE OLS — With Anticipation (Levels)"
+)
+```
+
+## With Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+
+```{r t1_logs, results='asis'}
+# With Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+fixest::etable(
+  full_logs,
+  headers      = c("Log~RN","Log~LPN","Log~CNA","Log~Total"),
+  dict         = coef_dict,
+  keep         = keep_vec,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = "Two-Way FE OLS — With Anticipation (Logs)"
+)
+```
+
+## Excluding Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+
+```{r t2_levels, results='asis'}
+# Excluding Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+fixest::etable(
+  noan_levels,
+  headers      = c("RN","LPN","CNA","Total"),
+  dict         = coef_dict,
+  keep         = keep_vec,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = "Two-Way FE OLS — Excluding Anticipation (Levels)"
+)
+```
+
+## Excluding Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+
+```{r t2_logs, results='asis'}
+# Excluding Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+fixest::etable(
+  noan_logs,
+  headers      = c("Log~RN","Log~LPN","Log~CNA","Log~Total"),
+  dict         = coef_dict,
+  keep         = keep_vec,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = "Two-Way FE OLS — Excluding Anticipation (Logs)"
+)
+
+```

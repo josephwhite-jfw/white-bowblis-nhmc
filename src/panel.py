@@ -3,6 +3,7 @@
 # -----------------------------------------------------------------------------
 # Build Final Panel (outer join) + CHOW filter + treatment/post/event time + case-mix
 # + date window + within-quarter fills (AFTER final panel) + gap indicator
+# + bridge-fill for equal values around NA runs + unified beds (num_beds -> beds_prov)
 # Also writes an analytical panel with HPPD + hospital filters.
 # -----------------------------------------------------------------------------
 
@@ -147,6 +148,44 @@ def coalesce_suffix_duplicates(df: pd.DataFrame) -> pd.DataFrame:
             out = out.drop(columns=dups)
     return out
 
+# -------- Bridge-fill helper: fill NA runs only if surrounded by equal values --
+def _fill_between_equal_series(s: pd.Series, numeric: bool = True, tol: float = 1e-9) -> pd.Series:
+    # Work on ndarray for speed
+    arr = s.to_numpy(copy=True)
+    n = len(arr)
+    is_na = pd.isna(arr)
+    i = 0
+    while i < n:
+        if not is_na[i]:
+            i += 1
+            continue
+        start = i
+        while i < n and is_na[i]:
+            i += 1
+        # NA run is [start, i-1]
+        prev_val = arr[start - 1] if start - 1 >= 0 else np.nan
+        next_val = arr[i] if i < n else np.nan
+        if not pd.isna(prev_val) and not pd.isna(next_val):
+            if numeric:
+                equal = np.isclose(prev_val, next_val, atol=tol, rtol=0.0)
+            else:
+                equal = (prev_val == next_val)
+            if equal:
+                arr[start:i] = prev_val
+    return pd.Series(arr, index=s.index)
+
+def bridge_fill_equal(panel: pd.DataFrame, cols: list[str], group_key: str, numeric: bool) -> pd.DataFrame:
+    if not cols:
+        return panel
+    # sort for stable month order within each CCN
+    panel = panel.sort_values([group_key, "year_month"], kind="mergesort")
+    def _apply(g):
+        for c in cols:
+            if c in g.columns:
+                g[c] = _fill_between_equal_series(g[c], numeric=numeric)
+        return g
+    return panel.groupby(group_key, group_keys=False, observed=True).apply(_apply)
+
 # ============================== Load ==========================================
 provider = pd.read_csv(PROVIDER_FP, low_memory=False)
 pbj      = pd.read_csv(PBJ_FP,      low_memory=False)
@@ -214,7 +253,7 @@ base["treatment"] = (
         .astype(int)
 )
 
-# Robust month-difference calculation
+# Robust month-difference calculation (avoid MonthEnd offsets)
 base["event_time"] = np.nan
 mask = first_p.notna()
 ym_y = pd.Series(ym_periods.year,  index=base.index)
@@ -254,7 +293,8 @@ want_cols = [
     "non_profit","government",
     "chain",
     "num_beds",
-    "beds_prov",                 # <-- NEW: provider-file beds
+    "beds_prov",                 # provider-file beds
+    # 'beds' will be created later and then moved right after these two
     "ccrc_facility","sff_facility",
     "occupancy_rate",
     "pct_medicare","pct_medicaid",
@@ -297,28 +337,40 @@ if _fill_cols:
              .transform(lambda df: df.ffill().bfill())
     )
     panel[_fill_cols] = panel[_fill_cols].where(panel[_fill_cols].notna(), filled_block)
-    # restore original dtypes where possible; ensure beds_prov numeric/nullable int
+    # restore original dtypes where possible (dummies may remain floats until final cast)
     for c, dt in _orig_dtypes.items():
         try:
-            if c == "beds_prov":
-                panel[c] = pd.to_numeric(panel[c], errors="coerce").astype("Int64")
-            else:
-                panel[c] = panel[c].astype(dt)
+            panel[c] = panel[c].astype(dt)
         except Exception:
             pass
 
-# ============================== Unified 'beds' variable ======================
-if {"num_beds", "beds_prov"}.issubset(panel.columns):
-    panel["beds"] = panel["num_beds"].where(panel["num_beds"].notna(), panel["beds_prov"])
-    panel["beds"] = pd.to_numeric(panel["beds"], errors="coerce").astype("Int64")
+# ============================== Bridge-fill between equal endpoints ===========
+# For numerics (use np.isclose): num_beds, beds_prov, occupancy_rate, pct_medicare, pct_medicaid
+bridge_numeric = [c for c in ["num_beds","beds_prov","occupancy_rate","pct_medicare","pct_medicaid"] if c in panel.columns]
+panel = bridge_fill_equal(panel, bridge_numeric, group_key="cms_certification_number", numeric=True)
+
+# For dummies (exact equals): binary_quarter_fill (which already includes cm dummies)
+bridge_binary = [c for c in binary_quarter_fill if c in panel.columns]
+panel = bridge_fill_equal(panel, bridge_binary, group_key="cms_certification_number", numeric=False)
+
+# ============================== Unified 'beds' variable =======================
+# beds = num_beds if present else beds_prov
+if "num_beds" in panel.columns or "beds_prov" in panel.columns:
+    panel["beds"] = panel.get("num_beds", pd.Series([np.nan]*len(panel)))
+    if "beds_prov" in panel.columns:
+        panel["beds"] = panel["beds"].where(panel["beds"].notna(), panel["beds_prov"])
+    panel["beds"] = pd.to_numeric(panel["beds"], errors="coerce")
 else:
-    # if one source missing, just carry whichever exists
-    if "num_beds" in panel.columns:
-        panel["beds"] = pd.to_numeric(panel["num_beds"], errors="coerce").astype("Int64")
-    elif "beds_prov" in panel.columns:
-        panel["beds"] = pd.to_numeric(panel["beds_prov"], errors="coerce").astype("Int64")
-    else:
-        panel["beds"] = pd.Series([pd.NA]*len(panel), dtype="Int64")
+    panel["beds"] = pd.Series([np.nan]*len(panel), dtype="float64")
+
+# Move 'beds' to be immediately after 'beds_prov'
+if "beds" in panel.columns:
+    cols = list(panel.columns)
+    if "beds_prov" in cols:
+        cols.remove("beds")
+        insert_at = cols.index("beds_prov") + 1
+        cols.insert(insert_at, "beds")
+        panel = panel[cols]
 
 # ============================== GAP indicator =================================
 if "gap_from_prev_months" in panel.columns:
@@ -327,16 +379,17 @@ else:
     panel["gap"] = pd.Series([pd.NA]*len(panel), dtype="Int8")
 
 # ============================== Final types, save PBJ panel ===================
+# Keep beds fields as numeric floats (no Int64 casting) to match prior behavior
+for c in ["num_beds","beds_prov","beds","occupancy_rate","pct_medicare","pct_medicaid"]:
+    if c in panel.columns:
+        panel[c] = pd.to_numeric(panel[c], errors="coerce")
+
 for col in ["non_profit","government","chain","urban","ccrc_facility","sff_facility",
             "provider_resides_in_hospital","gap","post","treatment","anticipation"]:
     if col in panel.columns:
         panel[col] = pd.to_numeric(panel[col], errors="coerce").astype("Int8")
 
-# ensure beds_prov is numeric/nullable int even if not filled above
-if "beds_prov" in panel.columns:
-    panel["beds_prov"] = pd.to_numeric(panel["beds_prov"], errors="coerce").astype("Int64")
-
-panel = panel.sort_values(["cms_certification_number","year_month"]).reset_index(drop=True)
+panel = panel.sort_values(["cms_certification_number","year_month"], kind="mergesort").reset_index(drop=True)
 panel.to_csv(OUT_PBJ_FP, index=False)
 print(f"[save] PBJ panel → {OUT_PBJ_FP} rows={len(panel):,} cols={panel.shape[1]}")
 
