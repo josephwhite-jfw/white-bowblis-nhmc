@@ -1,5 +1,5 @@
 ---
-title: "TWFE HPPD Results — Levels & Logs (Split Tables)"
+title: "Two Way Fixed Effect OLS Results"
 author: "Joe White"
 date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output:
@@ -128,7 +128,7 @@ keep_vec  <- paste0("%", c(
 ))
 ```
 
-## With Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+## With Anticipation — Level Outcomes
 
 ```{r t1_levels, results='asis'}
 # With Anticipation — Level Outcomes (RN, LPN, CNA, Total)
@@ -144,11 +144,11 @@ fixest::etable(
   style.tex    = style_tex,
   depvar       = FALSE,
   drop.section = "fixef",
-  title        = "Two-Way FE OLS — With Anticipation (Levels)"
+  title        = "Two-Way FE OLS in Levels — With Anticipation "
 )
 ```
 
-## With Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+## With Anticipation — Log Outcomes
 
 ```{r t1_logs, results='asis'}
 # With Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
@@ -164,11 +164,11 @@ fixest::etable(
   style.tex    = style_tex,
   depvar       = FALSE,
   drop.section = "fixef",
-  title        = "Two-Way FE OLS — With Anticipation (Logs)"
+  title        = "Two-Way FE OLS in Logs — With Anticipation"
 )
 ```
 
-## Excluding Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+## Excluding Anticipation — Level Outcomes
 
 ```{r t2_levels, results='asis'}
 # Excluding Anticipation — Level Outcomes (RN, LPN, CNA, Total)
@@ -184,11 +184,11 @@ fixest::etable(
   style.tex    = style_tex,
   depvar       = FALSE,
   drop.section = "fixef",
-  title        = "Two-Way FE OLS — Excluding Anticipation (Levels)"
+  title        = "Two-Way FE OLS in Levels — Excluding Anticipation"
 )
 ```
 
-## Excluding Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+## Excluding Anticipation — Log Outcomes
 
 ```{r t2_logs, results='asis'}
 # Excluding Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
@@ -204,7 +204,37 @@ fixest::etable(
   style.tex    = style_tex,
   depvar       = FALSE,
   drop.section = "fixef",
-  title        = "Two-Way FE OLS — Excluding Anticipation (Logs)"
+  title        = "Two-Way FE OLS in Logs — Excluding Anticipation"
 )
 
+```
+
+
+## Raw  Summaries
+
+```{r raw-summaries, echo=FALSE}
+# Print raw summaries for 8 models (level + log × with/without anticipation)
+summaries <- list(
+  "RN — With Anticipation (Level)"        = full_levels$RN,
+  "RN — With Anticipation (Log)"          = full_logs$`Log~RN`,
+  "LPN — With Anticipation (Level)"       = full_levels$LPN,
+  "LPN — With Anticipation (Log)"         = full_logs$`Log~LPN`,
+  "CNA — With Anticipation (Level)"       = full_levels$CNA,
+  "CNA — With Anticipation (Log)"         = full_logs$`Log~CNA`,
+  "Total — With Anticipation (Level)"     = full_levels$Total,
+  "Total — With Anticipation (Log)"       = full_logs$`Log~Total`,
+  "RN — Excluding Anticipation (Level)"   = noan_levels$RN,
+  "RN — Excluding Anticipation (Log)"     = noan_logs$`Log~RN`,
+  "LPN — Excluding Anticipation (Level)"  = noan_levels$LPN,
+  "LPN — Excluding Anticipation (Log)"    = noan_logs$`Log~LPN`,
+  "CNA — Excluding Anticipation (Level)"  = noan_levels$CNA,
+  "CNA — Excluding Anticipation (Log)"    = noan_logs$`Log~CNA`,
+  "Total — Excluding Anticipation (Level)"= noan_levels$Total,
+  "Total — Excluding Anticipation (Log)"  = noan_logs$`Log~Total`
+)
+
+for (nm in names(summaries)) {
+  cat("\n\n=============================\n", nm, "\n=============================\n")
+  print(summary(summaries[[nm]]))
+}
 ```

@@ -1,0 +1,273 @@
+---
+title: "TWFE Event-Study Results — Levels & Logs (Split Tables)"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+fontsize: 11pt
+geometry: margin=1in
+header-includes:
+  - \usepackage{booktabs}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3, fixest_nthreads = 4)
+
+suppressPackageStartupMessages({
+  library(fixest)
+  library(dplyr)
+  library(readr)
+})
+```
+
+```{r data, cache=FALSE}
+# === Load panel ===
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
+
+needed <- c(
+  "cms_certification_number","year_month","anticipation",
+  "event_time","treatment","time","time_treated",
+  "government","non_profit","chain","beds",
+  "occupancy_rate","pct_medicare","pct_medicaid",
+  "cm_q_state_2","cm_q_state_3","cm_q_state_4",
+  "rn_hppd","lpn_hppd","cna_hppd","total_hppd"
+)
+
+df <- readr::read_csv(panel_fp, show_col_types = FALSE, col_select = all_of(needed)) %>%
+  mutate(
+    cms_certification_number = as.factor(cms_certification_number),
+    year_month = as.factor(year_month)
+  )
+
+# Ever-treated & event-time window
+df <- df %>%
+  group_by(cms_certification_number) %>%
+  mutate(ever_treated = as.integer(any(treatment == 1, na.rm = TRUE) | any(!is.na(event_time)))) %>%
+  ungroup() %>%
+  mutate(
+    event_time_capped = dplyr::case_when(
+      ever_treated == 1L & !is.na(event_time) ~ pmin(pmax(as.integer(event_time), -24L), 24L),
+      TRUE ~ 9999L  # sentinel for never-treated / outside the -24..+24 window
+    )
+  )
+
+# Log outcomes (only if positive)
+mk_log <- function(x) ifelse(x > 0, log(x), NA_real_)
+df <- df %>%
+  mutate(
+    ln_rn    = mk_log(rn_hppd),
+    ln_lpn   = mk_log(lpn_hppd),
+    ln_cna   = mk_log(cna_hppd),
+    ln_total = mk_log(total_hppd)
+  )
+
+# "No anticipation" view
+df_noant <- dplyr::filter(df, anticipation == 0)
+```
+
+```{r helpers, include=FALSE}
+# Controls (TWFE set)
+controls_rhs <- paste(
+  "government + non_profit + chain + beds +",
+  "occupancy_rate + pct_medicare + pct_medicaid +",
+  "cm_q_state_2 + cm_q_state_3 + cm_q_state_4"
+)
+
+# Pick a valid reference (avoid i(..., ref=.) errors if desired ref is absent)
+pick_ref <- function(dat, desired = NULL) {
+  ev <- sort(unique(dat$event_time_capped[dat$ever_treated == 1L]))
+  if (length(ev) == 0L) stop("No treated event times found.")
+  if (!is.null(desired) && desired %in% ev) return(as.integer(desired))
+  if (-1L %in% ev) return(-1L)
+  if ( 0L %in% ev) return(0L)
+  negs <- ev[ev < 0L]
+  if (length(negs)) return(max(negs))  # closest negative (e.g., -2)
+  return(ev[1])
+}
+
+# Runner for one outcome, with chosen reference period
+run_es_twfe <- function(lhs, data, ref_val) {
+  fml <- as.formula(paste0(
+    lhs, " ~ i(event_time_capped, ever_treated, ref = ", ref_val, ", keep = -24:24, name = 'ET') + ",
+    controls_rhs,
+    " | cms_certification_number + year_month"
+  ))
+  feols(
+    fml,
+    data = data,
+    vcov = ~ cms_certification_number + year_month,
+    lean = TRUE
+  )
+}
+
+# Common etable options
+style_tex <- fixest::style.tex("aer")
+sig_vec   <- c("***"=0.01,"**"=0.05,"*"=0.10)
+
+# Only event-time coefficients (use original names => prefix with %)
+keep_es   <- "%^ET::"
+
+```
+
+```{r models, cache=FALSE}
+# References: with anticipation -> prefer -1; no anticipation -> prefer -4
+ref_full  <- pick_ref(df,       desired = -1L)
+ref_noant <- pick_ref(df_noant, desired = -4L)
+
+# WITH anticipation: Levels & Logs
+m_rn_full   <- run_es_twfe("rn_hppd",    df, ref_full)
+m_lpn_full  <- run_es_twfe("lpn_hppd",   df, ref_full)
+m_cna_full  <- run_es_twfe("cna_hppd",   df, ref_full)
+m_tot_full  <- run_es_twfe("total_hppd", df, ref_full)
+
+m_lrn_full  <- run_es_twfe("ln_rn",      df, ref_full)
+m_llpn_full <- run_es_twfe("ln_lpn",     df, ref_full)
+m_lcna_full <- run_es_twfe("ln_cna",     df, ref_full)
+m_ltot_full <- run_es_twfe("ln_total",   df, ref_full)
+
+# NO anticipation: Levels & Logs
+m_rn_na   <- run_es_twfe("rn_hppd",    df_noant, ref_noant)
+m_lpn_na  <- run_es_twfe("lpn_hppd",   df_noant, ref_noant)
+m_cna_na  <- run_es_twfe("cna_hppd",   df_noant, ref_noant)
+m_tot_na  <- run_es_twfe("total_hppd", df_noant, ref_noant)
+
+m_lrn_na  <- run_es_twfe("ln_rn",      df_noant, ref_noant)
+m_llpn_na <- run_es_twfe("ln_lpn",     df_noant, ref_noant)
+m_lcna_na <- run_es_twfe("ln_cna",     df_noant, ref_noant)
+m_ltot_na <- run_es_twfe("ln_total",   df_noant, ref_noant)
+
+# Named lists with headers
+full_levels <- list("RN"=m_rn_full, "LPN"=m_lpn_full, "CNA"=m_cna_full, "Total"=m_tot_full)
+full_logs   <- list("Log~RN"=m_lrn_full, "Log~LPN"=m_llpn_full, "Log~CNA"=m_lcna_full, "Log~Total"=m_ltot_full)
+noan_levels <- list("RN"=m_rn_na, "LPN"=m_lpn_na, "CNA"=m_cna_na, "Total"=m_tot_na)
+noan_logs   <- list("Log~RN"=m_lrn_na, "Log~LPN"=m_llpn_na, "Log~CNA"=m_lcna_na, "Log~Total"=m_ltot_na)
+```
+
+## With Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+
+```{r t1_levels, results='asis'}
+fixest::etable(
+  full_levels,
+  headers      = c("RN","LPN","CNA","Total"),
+  keep         = keep_es,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = paste0("TWFE ES — With Anticipation (Levels). Reference t = ", ref_full)
+)
+```
+
+## With Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+
+```{r t1_logs, results='asis'}
+fixest::etable(
+  full_logs,
+  headers      = c("Log~RN","Log~LPN","Log~CNA","Log~Total"),
+  keep         = keep_es,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = paste0("TWFE ES — With Anticipation (Logs). Reference t = ", ref_full)
+)
+```
+
+## Excluding Anticipation — Level Outcomes (RN, LPN, CNA, Total)
+
+```{r t2_levels, results='asis'}
+fixest::etable(
+  noan_levels,
+  headers      = c("RN","LPN","CNA","Total"),
+  keep         = keep_es,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = paste0("TWFE ES — Excluding Anticipation (Levels). Reference t = ", ref_noant)
+)
+```
+
+## Excluding Anticipation — Log Outcomes (Log RN, Log LPN, Log CNA, Log Total)
+
+```{r t2_logs, results='asis'}
+fixest::etable(
+  noan_logs,
+  headers      = c("Log~RN","Log~LPN","Log~CNA","Log~Total"),
+  keep         = keep_es,
+  se.below     = TRUE,
+  fitstat      = c("n","r2"),
+  signif.code  = sig_vec,
+  tex          = TRUE,
+  style.tex    = style_tex,
+  depvar       = FALSE,
+  drop.section = "fixef",
+  title        = paste0("TWFE ES — Excluding Anticipation (Logs). Reference t = ", ref_noant)
+)
+```
+
+```{r plots, echo=TRUE}
+op <- par(mfrow = c(2,2), mar = c(4,4,2,1))
+iplot(m_rn_full,  ref = ref_full,  xlim = c(-24,24), main = "RN (with anticipation)")
+iplot(m_lpn_full, ref = ref_full,  xlim = c(-24,24), main = "LPN (with anticipation)")
+iplot(m_cna_full, ref = ref_full,  xlim = c(-24,24), main = "CNA (with anticipation)")
+iplot(m_tot_full, ref = ref_full,  xlim = c(-24,24), main = "Total (with anticipation)")
+par(op)
+
+op <- par(mfrow = c(2,2), mar = c(4,4,2,1))
+iplot(m_lrn_full,  ref = ref_full, xlim = c(-24,24), main = "Log RN (with anticipation)")
+iplot(m_llpn_full, ref = ref_full, xlim = c(-24,24), main = "Log LPN (with anticipation)")
+iplot(m_lcna_full, ref = ref_full, xlim = c(-24,24), main = "Log CNA (with anticipation)")
+iplot(m_ltot_full, ref = ref_full, xlim = c(-24,24), main = "Log Total (with anticipation)")
+par(op)
+
+op <- par(mfrow = c(2,2), mar = c(4,4,2,1))
+iplot(m_rn_na,  ref = ref_noant, xlim = c(-24,24), main = "RN (no anticipation)")
+iplot(m_lpn_na, ref = ref_noant, xlim = c(-24,24), main = "LPN (no anticipation)")
+iplot(m_cna_na, ref = ref_noant, xlim = c(-24,24), main = "CNA (no anticipation)")
+iplot(m_tot_na, ref = ref_noant, xlim = c(-24,24), main = "Total (no anticipation)")
+par(op)
+
+op <- par(mfrow = c(2,2), mar = c(4,4,2,1))
+iplot(m_lrn_na,  ref = ref_noant, xlim = c(-24,24), main = "Log RN (no anticipation)")
+iplot(m_llpn_na, ref = ref_noant, xlim = c(-24,24), main = "Log LPN (no anticipation)")
+iplot(m_lcna_na, ref = ref_noant, xlim = c(-24,24), main = "Log CNA (no anticipation)")
+iplot(m_ltot_na, ref = ref_noant, xlim = c(-24,24), main = "Log Total (no anticipation)")
+par(op)
+```
+
+```{r summaries, echo=FALSE}
+summary(m_rn_full,   keep = "%^ET::")
+summary(m_lpn_full,  keep = "%^ET::")
+summary(m_cna_full,  keep = "%^ET::")
+summary(m_tot_full,  keep = "%^ET::")
+
+summary(m_lrn_full,  keep = "%^ET::")
+summary(m_llpn_full, keep = "%^ET::")
+summary(m_lcna_full, keep = "%^ET::")
+summary(m_ltot_full, keep = "%^ET::")
+
+summary(m_rn_na,   keep = "%^ET::")
+summary(m_lpn_na,  keep = "%^ET::")
+summary(m_cna_na,  keep = "%^ET::")
+summary(m_tot_na,  keep = "%^ET::")
+
+summary(m_lrn_na,  keep = "%^ET::")
+summary(m_llpn_na, keep = "%^ET::")
+summary(m_lcna_na, keep = "%^ET::")
+summary(m_ltot_na, keep = "%^ET::")
+
+```

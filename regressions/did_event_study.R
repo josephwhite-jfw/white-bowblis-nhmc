@@ -1,6 +1,7 @@
 library(dplyr)
 library(fixest)
 library(readr)
+library(did)
 
 panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
 
@@ -16,33 +17,41 @@ keep_cols <- c(
 
 df <- read_csv(panel_fp, show_col_types = FALSE, col_select = all_of(keep_cols)) %>%
   mutate(
-    cms_certification_number = as.factor(cms_certification_number),
+    cms_certification_number = as.integer(cms_certification_number),
     year_month = as.character(year_month),
     time = as.integer(time),
     time_treated = as.numeric(time_treated)
   )
 
-# Never-treated cohort: set to Inf (as per fixest convention)
-df$time_treated[is.na(df$time_treated)] <- Inf
+# Never-treated cohort: set to Inf (as per did convention)
+df$time_treated[is.na(df$time_treated)] <- 0
 
 # Controls
 controls_rhs <- ~ government + non_profit + chain + beds +
   occupancy_rate + pct_medicare + pct_medicaid +
   cm_q_state_2 + cm_q_state_3 + cm_q_state_4
 
-# Event-study with cohort-time (Sun & Abraham)
-# - ref.p = -1: omit t = -1 as the baseline period
-# - 2-way FE: facility + calendar month
-# - cluster by facility
-es_mod <- feols(
-  fml = update(total_hppd ~ sunab(time_treated, time, ref.p = -1),
-               ~ government + non_profit + chain + beds +
-                 occupancy_rate + pct_medicare + pct_medicaid +
-                 cm_q_state_2 + cm_q_state_3 + cm_q_state_4),
-  data   = df,
-  fixef  = c("cms_certification_number", "year_month"),
-  cluster = "cms_certification_number"
+# ========== WITH anticipation periods ==========
+att_gt_with <- att_gt(
+  yname   = "total_hppd",
+  tname   = "time",
+  idname  = "cms_certification_number",
+  gname   = "time_treated",                      # first-treatment time (0 = never)
+  xformla = ~ government + non_profit + chain + beds +
+    occupancy_rate + pct_medicare + pct_medicaid +
+    cm_q_state_2 + cm_q_state_3 + cm_q_state_4,
+  data    = df,
+  panel   = TRUE,                          # true panel (not repeated x-sections)
+  est_method = "ipw",                       # doubly-robust (recommended)
+  clustervars = "cms_certification_number",
+  allow_unbalanced_panel = TRUE,
+  control_group = "nevertreated"
 )
 
-summary(es_mod)
-etable(es_mod, se = "cluster")
+# Overall ATT (simple average across cohorts/times)
+summary(att_gt_with)
+
+es <- aggte(att_gt_with, type = "dynamic", min_e = -24, max_e = 24)
+summary(es)          # prints e = -24, ..., +24
+# optional tidy vector/data.frame:
+out <- data.frame(e = es$egt, att = es$att.egt, se = es$se.egt)
