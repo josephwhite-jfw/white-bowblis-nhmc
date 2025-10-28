@@ -198,3 +198,4 @@ Thumbs.db
 # Virtual environments
 .venv/
 .conda/
+.Rproj.user

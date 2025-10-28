@@ -1,0 +1,174 @@
+---
+title: "TWFE Event Study"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+fontsize: 11pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3)
+options(fixest_nthreads = 4)
+
+suppressPackageStartupMessages({
+  library(fixest)
+  library(readr)
+  library(dplyr)
+})
+```
+
+```{r data-prep}
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
+
+keep_cols <- c(
+  "cms_certification_number","year_month","anticipation",
+  "event_time","treatment","time","time_treated",
+  "government","non_profit","chain","beds",
+  "occupancy_rate","pct_medicare","pct_medicaid",
+  "cm_q_state_2","cm_q_state_3","cm_q_state_4",
+  "rn_hppd","lpn_hppd","cna_hppd","total_hppd"
+)
+
+df <- read_csv(panel_fp, show_col_types = FALSE, col_select = all_of(keep_cols)) %>%
+  mutate(
+    cms_certification_number = as.factor(cms_certification_number),
+    year_month = as.factor(year_month)
+  )
+
+# Ever-treated & overwrite event_time with capped/sentinel values
+df <- df %>%
+  group_by(cms_certification_number) %>%
+  mutate(ever_treated = as.integer(any(treatment == 1, na.rm = TRUE) | any(!is.na(event_time)))) %>%
+  ungroup() %>%
+  mutate(
+    event_time = case_when(
+      ever_treated == 1L & !is.na(event_time) ~ pmin(pmax(as.integer(event_time), -24L), 24L),
+      TRUE ~ 9999L  # sentinel for never-treated / out-of-window
+    )
+  )
+
+# Logged outcomes (positive only)
+mk_log <- function(x) ifelse(x > 0, log(x), NA_real_)
+df <- df %>% mutate(
+  ln_rn    = mk_log(rn_hppd),
+  ln_lpn   = mk_log(lpn_hppd),
+  ln_cna   = mk_log(cna_hppd),
+  ln_total = mk_log(total_hppd)
+)
+
+# Controls RHS
+controls_rhs <- paste(
+  "government + non_profit + chain + beds +",
+  "occupancy_rate + pct_medicare + pct_medicaid +",
+  "cm_q_state_2 + cm_q_state_3 + cm_q_state_4"
+)
+
+# Reference picker now looks at 'event_time' (already capped/sentinel)
+pick_ref <- function(dat, desired = NULL) {
+  ev <- sort(unique(dat$event_time[dat$ever_treated == 1L]))
+  ev <- ev[is.finite(ev) & ev != 9999L]
+  if (length(ev) == 0L) stop("No treated event times found.")
+  if (!is.null(desired) && desired %in% ev) return(as.integer(desired))
+  if (-1L %in% ev) return(-1L)
+  if ( 0L %in% ev) return(0L)
+  negs <- ev[ev < 0L]
+  if (length(negs)) return(max(negs))
+  return(ev[1])
+}
+
+# Runner uses event_time directly
+run_es_twfe <- function(lhs, data, ref_val) {
+  fml <- as.formula(paste0(
+    lhs, " ~ i(event_time, ever_treated, ref = ", ref_val, ", keep = -24:24) + ",
+    controls_rhs,
+    " | cms_certification_number + year_month"
+  ))
+  feols(fml, data = data, vcov = ~ cms_certification_number + year_month, lean = TRUE)
+}
+```
+
+```{r fit-models}
+# WITH anticipation
+ref_full <- pick_ref(df, desired = -1L)
+m_rn_full   <- run_es_twfe("rn_hppd",    df, ref_full)
+m_lpn_full  <- run_es_twfe("lpn_hppd",   df, ref_full)
+m_cna_full  <- run_es_twfe("cna_hppd",   df, ref_full)
+m_tot_full  <- run_es_twfe("total_hppd", df, ref_full)
+m_lrn_full  <- run_es_twfe("ln_rn",      df, ref_full)
+m_llpn_full <- run_es_twfe("ln_lpn",     df, ref_full)
+m_lcna_full <- run_es_twfe("ln_cna",     df, ref_full)
+m_ltot_full <- run_es_twfe("ln_total",   df, ref_full)
+
+# WITHOUT anticipation
+df_noant  <- filter(df, anticipation == 0)
+ref_noant <- pick_ref(df_noant, desired = -4L)
+m_rn_na   <- run_es_twfe("rn_hppd",    df_noant, ref_noant)
+m_lpn_na  <- run_es_twfe("lpn_hppd",   df_noant, ref_noant)
+m_cna_na  <- run_es_twfe("cna_hppd",   df_noant, ref_noant)
+m_tot_na  <- run_es_twfe("total_hppd", df_noant, ref_noant)
+m_lrn_na  <- run_es_twfe("ln_rn",      df_noant, ref_noant)
+m_llpn_na <- run_es_twfe("ln_lpn",     df_noant, ref_noant)
+m_lcna_na <- run_es_twfe("ln_cna",     df_noant, ref_noant)
+m_ltot_na <- run_es_twfe("ln_total",   df_noant, ref_noant)
+```
+
+##                    With Anticipation (Levels)
+```{r}
+summary(m_rn_full)
+summary(m_lpn_full)
+summary(m_cna_full)
+summary(m_tot_full)
+```
+
+##                    With Anticipation (Logs)
+```{r}
+summary(m_lrn_full)
+summary(m_llpn_full)
+summary(m_lcna_full)
+summary(m_ltot_full)
+```
+
+##                  Excluding Anticipation (Levels)
+```{r}
+summary(m_rn_na)
+summary(m_lpn_na)
+summary(m_cna_na)
+summary(m_tot_na)
+```
+
+##                  Excluding Anticipation (Logs)
+```{r}
+summary(m_lrn_na)
+summary(m_llpn_na)
+summary(m_lcna_na)
+summary(m_ltot_na)
+```
+
+## Plots
+```{r, fig.width=7, fig.height=4}
+iplot(m_rn_full,  ref=ref_full,  xlim=c(-24,24), xlab="Months relative to CHOW", ylab="RN HPPD")
+iplot(m_lpn_full, ref=ref_full,  xlim=c(-24,24), xlab="Months relative to CHOW", ylab="LPN HPPD")
+iplot(m_cna_full, ref=ref_full,  xlim=c(-24,24), xlab="Months relative to CHOW", ylab="CNA HPPD")
+iplot(m_tot_full, ref=ref_full,  xlim=c(-24,24), xlab="Months relative to CHOW", ylab="Total HPPD")
+
+iplot(m_lrn_full,  ref=ref_full, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(RN HPPD)")
+iplot(m_llpn_full, ref=ref_full, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(LPN HPPD)")
+iplot(m_lcna_full, ref=ref_full, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(CNA HPPD)")
+iplot(m_ltot_full, ref=ref_full, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(Total HPPD)")
+
+iplot(m_rn_na,  ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="RN HPPD")
+iplot(m_lpn_na, ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="LPN HPPD")
+iplot(m_cna_na, ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="CNA HPPD")
+iplot(m_tot_na, ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="Total HPPD")
+
+iplot(m_lrn_na,  ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(RN HPPD)")
+iplot(m_llpn_na, ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(LPN HPPD)")
+iplot(m_lcna_na, ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(CNA HPPD)")
+iplot(m_ltot_na, ref=ref_noant, xlim=c(-24,24), xlab="Months relative to CHOW", ylab="log(Total HPPD)")
+```
