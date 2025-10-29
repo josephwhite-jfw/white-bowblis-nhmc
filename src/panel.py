@@ -242,6 +242,9 @@ base = base.merge(nh_timing, on="cms_certification_number", how="left")
 # ============================== Treatment / Post / Event-time =================
 ym_periods = pd.PeriodIndex(base["year_month"].astype(str), freq="M")
 
+base['time'] = (ym_periods.year * 12 + ym_periods.month) - (2017 * 12 + 1) + 1
+base['time'] = base['time'].astype('Int32')
+
 # First CHOW month as Period[M]
 first_p = pd.to_datetime(base["first_nh_month"], errors="coerce").dt.to_period("M")
 
@@ -263,14 +266,27 @@ fp_m = first_p.dt.month
 et_vals = (ym_y[mask] - fp_y[mask]) * 12 + (ym_m[mask] - fp_m[mask])
 base.loc[mask, "event_time"] = et_vals.astype(int)
 
+# --- time_treated: global 'time' at the treatment month (event_time == 0)
+tt = (
+    base.loc[base["event_time"].eq(0), ["cms_certification_number", "time"]]
+        .drop_duplicates("cms_certification_number")
+        .rename(columns={"time": "time_treated"})
+)
+
+base = base.merge(tt, on="cms_certification_number", how="left")
+base["time_treated"] = base["time_treated"].astype("Int32")  # <NA> for never-treated
+
 # post = 1 for months strictly AFTER the CHOW month (uses event_time > 0)
 base["post"] = 0
 has_one = base["n_chow_nh_compare"].eq(1) & mask
 base.loc[has_one, "post"] = (base.loc[has_one, "event_time"] > 0).astype(int)
 
-# anticipation dummy = 1 for event_time in {-3,-2,-1,0,1,2}
-base["anticipation"] = 0
-base.loc[base["event_time"].isin([-3, -2, -1, 0, 1, 2]), "anticipation"] = 1
+# anticipation1 dummy = 1 for event_time in {-3,-2,-1,0,1,2}
+base["anticipation1"] = 0
+base.loc[base["event_time"].isin([-3, -2, -1, 0, 1, 2]), "anticipation1"] = 1
+#anticipation2 which is a dummy = 1 for event_time in {-3,-2,-1}
+base["anticipation2"] = 0
+base.loc[base["event_time"].isin([-3,-2,-1]), "anticipation2"] = 1
 
 # ============================== Case-mix dummies ==============================
 if "case_mix_total" not in base.columns:
@@ -282,10 +298,13 @@ want_cols = [
     "cms_certification_number",
     "quarter",
     "year_month",
+    "time",
+    "time_treated",
     "treatment",
     "post",
     "event_time",
-    "anticipation",
+    "anticipation1",
+    "anticipation2",
     "provider_resides_in_hospital",
     "gap_from_prev_months",
     "coverage_ratio",
@@ -293,8 +312,7 @@ want_cols = [
     "non_profit","government",
     "chain",
     "num_beds",
-    "beds_prov",                 # provider-file beds
-    # 'beds' will be created later and then moved right after these two
+    "beds_prov",
     "ccrc_facility","sff_facility",
     "occupancy_rate",
     "pct_medicare","pct_medicaid",
@@ -385,7 +403,7 @@ for c in ["num_beds","beds_prov","beds","occupancy_rate","pct_medicare","pct_med
         panel[c] = pd.to_numeric(panel[c], errors="coerce")
 
 for col in ["non_profit","government","chain","urban","ccrc_facility","sff_facility",
-            "provider_resides_in_hospital","gap","post","treatment","anticipation"]:
+            "provider_resides_in_hospital","gap","post","treatment","anticipation1","anticipation2"]:
     if col in panel.columns:
         panel[col] = pd.to_numeric(panel[col], errors="coerce").astype("Int8")
 
