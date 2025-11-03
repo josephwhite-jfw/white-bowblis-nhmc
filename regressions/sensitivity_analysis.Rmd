@@ -1,0 +1,169 @@
+---
+title: "Two Way Fixed Effect OLS Results — Sensitivity Analysis (Raw Summaries)"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+fontsize: 11pt
+geometry: margin=1in
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{titling}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3, fixest_nthreads = 4)
+
+suppressPackageStartupMessages({
+  library(fixest)
+  library(dplyr)
+  library(readr)
+})
+```
+
+```{r sensitivity-raw-summaries, results='asis'}
+# ===== 0) Load =====
+
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
+
+need <- c(
+"cms_certification_number","year_month",
+"anticipation1","anticipation2","post",
+"rn_hppd","lpn_hppd","cna_hppd","total_hppd",
+"government","non_profit","chain","beds",
+"occupancy_rate","pct_medicare","pct_medicaid",
+"cm_q_state_2","cm_q_state_3","cm_q_state_4"
+)
+
+df <- read_csv(panel_fp, show_col_types = FALSE, col_select = all_of(need)) %>%
+mutate(
+cms_certification_number = as.factor(cms_certification_number),
+year_month = as.factor(year_month),
+ym_date = as.Date(paste0(gsub("/", "-", as.character(year_month)), "-01"))
+)
+
+# ===== 1) Log outcomes (only if > 0) =====
+
+mk_log <- function(x) ifelse(x > 0, log(x), NA_real_)
+df <- df %>%
+mutate(
+ln_rn    = mk_log(rn_hppd),
+ln_lpn   = mk_log(lpn_hppd),
+ln_cna   = mk_log(cna_hppd),
+ln_total = mk_log(total_hppd)
+)
+
+# ===== 2) TWFE spec =====
+
+controls <- paste(
+"government + non_profit + chain + beds +",
+"occupancy_rate + pct_medicare + pct_medicaid +",
+"cm_q_state_2 + cm_q_state_3 + cm_q_state_4"
+)
+rhs <- paste("post +", controls, "| cms_certification_number + year_month")
+make_fml <- function(lhs) as.formula(paste(lhs, "~", rhs))
+vc <- ~ cms_certification_number + year_month
+
+# ===== 3) Scenarios =====
+
+# Baseline chain flag as of 2017Q1 (Jan–Mar 2017)
+
+baseline_chain <- df %>%
+filter(ym_date >= as.Date("2017-01-01"), ym_date <= as.Date("2017-03-31")) %>%
+arrange(cms_certification_number, ym_date) %>%
+group_by(cms_certification_number) %>%
+summarise(baseline_chain_2017Q1 = dplyr::first(chain), .groups = "drop")
+
+df_bc <- df %>% left_join(baseline_chain, by = "cms_certification_number")
+
+SCENARIOS <- list(
+"Pre-pandemic (2017–2019)" = df %>% filter(ym_date >= as.Date("2017-01-01"),
+ym_date <= as.Date("2019-12-31")),
+"Pandemic (2020Q2–2024Q2)" = df %>% filter(ym_date >= as.Date("2020-04-01"),
+ym_date <= as.Date("2024-06-30")),
+"For-profit only"          = df %>% filter(government == 0, non_profit == 0),
+"Chain in 2017Q1"          = df_bc %>% filter(!is.na(baseline_chain_2017Q1),
+baseline_chain_2017Q1 == 1),
+"Non-chain in 2017Q1"      = df_bc %>% filter(!is.na(baseline_chain_2017Q1),
+baseline_chain_2017Q1 == 0)
+)
+
+# ===== 4) Samples (anticipation slices) =====
+
+SAMPLES <- list(
+"With anticipation (full sample)" = function(d) d,
+"Without anticipation I (anticipation1==0)"  = function(d) d %>% filter(anticipation1 == 0),
+"Without anticipation II (anticipation2==0)" = function(d) d %>% filter(anticipation2 == 0)
+)
+
+# ===== 5) Outcomes =====
+
+OUTS <- list(
+"RN (level)"    = "rn_hppd",
+"LPN (level)"   = "lpn_hppd",
+"CNA (level)"   = "cna_hppd",
+"Total (level)" = "total_hppd",
+"Log RN"        = "ln_rn",
+"Log LPN"       = "ln_lpn",
+"Log CNA"       = "ln_cna",
+"Log Total"     = "ln_total"
+)
+
+# ===== 6) Run and print raw summaries =====
+
+sep_line <- function(char = "=", n = 84) paste(rep(char, n), collapse = "")
+
+for (sc in names(SCENARIOS)) {
+d_sc <- SCENARIOS[[sc]]
+cat("\n\n", sep_line("="), "\nSCENARIO: ", sc, "\n", sep_line("="), "\n", sep = "")
+
+# Scenario stats
+
+sc_n  <- format(nrow(d_sc), big.mark = ",")
+sc_cc <- format(dplyr::n_distinct(d_sc$cms_certification_number), big.mark = ",")
+sc_min <- suppressWarnings(min(d_sc$ym_date, na.rm = TRUE))
+sc_max <- suppressWarnings(max(d_sc$ym_date, na.rm = TRUE))
+cat(sprintf("[info] rows=%s | CCNs=%s | span=%s to %s\n\n",
+sc_n, sc_cc, as.character(sc_min), as.character(sc_max)))
+
+for (sn in names(SAMPLES)) {
+d_s <- SAMPLES[[sn]](d_sc)
+if (!nrow(d_s)) {
+cat(sprintf("[warn] Sample '%s' is empty — skipped.\n\n", sn))
+next
+}
+
+```
+samp_n  <- format(nrow(d_s), big.mark = ",")
+samp_cc <- format(dplyr::n_distinct(d_s$cms_certification_number), big.mark = ",")
+cat(sep_line("-"), "\nSAMPLE: ", sn, "\n", sep_line("-"),
+    sprintf("\n[info] rows=%s | CCNs=%s\n\n", samp_n, samp_cc), sep = "")
+
+for (on in names(OUTS)) {
+  lhs <- OUTS[[on]]
+  # Skip if LHS is all NA (e.g., logs where zeros make NA)
+  if (all(is.na(d_s[[lhs]]))) {
+    cat(sprintf("[skip] Outcome '%s' (all NA in this sample)\n\n", on))
+    next
+  }
+  fml <- make_fml(lhs)
+
+  cat(sep_line("."), sprintf("\nMODEL: %s — %s — %s\n", sc, sn, on), sep = "")
+  cat("Formula: ", deparse(fml), "\n", sep = "")
+  cat("Vcov: ~ cms_certification_number + year_month\n")
+  cat(sep_line("."), "\n", sep = "")
+
+  m <- feols(fml, data = d_s, vcov = vc, lean = TRUE)
+  print(summary(m))
+  cat("\n")
+}
+```
+
+}
+}
+
+

@@ -1,91 +1,56 @@
 library(fixest)
 library(dplyr)
 library(readr)
-library(tidyr)
 
 # === Load panel ===
 panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
-df <- read_csv(panel_fp)
+df <- read_csv(panel_fp, show_col_types = FALSE)
 
-# === Model formula components ===
+# === Model pieces ===
 controls <- paste(
   "government + non_profit + chain + beds +",
   "occupancy_rate + pct_medicare + pct_medicaid +",
   "cm_q_state_2 + cm_q_state_3 + cm_q_state_4"
 )
-
-# === Full RHS (treatment + controls) ===
 rhs <- paste("post +", controls)
+fe  <- "~ cms_certification_number + year_month"
+vc  <- ~ cms_certification_number + year_month
 
-# === Run models ===
-m1 <- feols(as.formula(paste("rn_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
+# Outcomes and transforms
+outs <- c("rn_hppd", "lpn_hppd", "cna_hppd", "total_hppd")
+xfms <- c("level" = "%s", "log" = "log(%s)")  # format strings for lhs
 
-m2 <- feols(as.formula(paste("log(rn_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
+# Datasets to run
+datasets <- list(
+  full  = df,
+  a1    = dplyr::filter(df, anticipation1 == 0),
+  a2    = dplyr::filter(df, anticipation2 == 0)
+)
 
-m3 <- feols(as.formula(paste("lpn_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
+# Helper to build the feols formula string
+make_fml <- function(lhs) as.formula(
+  sprintf("%s ~ %s | cms_certification_number + year_month", lhs, rhs)
+)
 
-m4 <- feols(as.formula(paste("log(lpn_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
+# Fit all models into a named list
+mods <- list()
+for (dname in names(datasets)) {
+  dat <- datasets[[dname]]
+  for (y in outs) {
+    for (tname in names(xfms)) {
+      lhs <- sprintf(xfms[[tname]], y)
+      key <- sprintf("%s_%s_%s", dname, tname, y) # e.g., "a1_log_rn_hppd"
+      mods[[key]] <- feols(
+        fml  = make_fml(lhs),
+        data = dat,
+        vcov = vc
+      )
+    }
+  }
+}
 
-m5 <- feols(as.formula(paste("cna_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
-
-m6 <- feols(as.formula(paste("log(cna_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
-
-m7 <- feols(as.formula(paste("total_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
-
-m8 <- feols(as.formula(paste("log(total_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
-
-# === Output summaries ===
-summary(m1)
-summary(m2)
-summary(m3)
-summary(m4)
-summary(m5)
-summary(m6)
-summary(m7)
-summary(m8)
-
-df2 <- df %>%
-  filter(anticipation == 0)
-
-# === Run models ===
-m9 <- feols(as.formula(paste("rn_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df2, vcov = ~ cms_certification_number + year_month)
-
-m10 <- feols(as.formula(paste("log(rn_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df2, vcov = ~ cms_certification_number + year_month)
-
-m11 <- feols(as.formula(paste("lpn_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df2, vcov = ~ cms_certification_number + year_month)
-
-m12 <- feols(as.formula(paste("log(lpn_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df2, vcov = ~ cms_certification_number + year_month)
-
-m13 <- feols(as.formula(paste("cna_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df2, vcov = ~ cms_certification_number + year_month)
-
-m14 <- feols(as.formula(paste("log(cna_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df2, vcov = ~ cms_certification_number + year_month)
-
-m15 <- feols(as.formula(paste("total_hppd ~", rhs, "| cms_certification_number + year_month")),
-            data = df, vcov = ~ cms_certification_number + year_month)
-
-m16 <- feols(as.formula(paste("log(total_hppd) ~", rhs, "| cms_certification_number + year_month")),
-            data = df2, vcov = ~ cms_certification_number + year_month)
-
-# === Output summaries ===
-summary(m9)
-summary(m10)
-summary(m11)
-summary(m12)
-summary(m13)
-summary(m14)
-summary(m15)
-summary(m16)
+# === Output raw summaries ===
+invisible(lapply(names(mods), function(nm) {
+  cat("\n", strrep("-", 80), "\n", nm, "\n", strrep("-", 80), "\n", sep = "")
+  print(summary(mods[[nm]]))
+}))
