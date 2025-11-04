@@ -1,0 +1,948 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+  11pt,
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={TWFE Sensitivity --- Raw Summaries (Selectable Outcomes)},
+  pdfauthor={Joe White},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{TWFE Sensitivity --- Raw Summaries (Selectable Outcomes)}
+\author{Joe White}
+\date{November 03, 2025}
+
+\begin{document}
+\maketitle
+
+\subsection{SCENARIO:
+pre\_pandemic\_2017\_2019}\label{scenario-pre_pandemic_2017_2019}
+
+\subsubsection{SAMPLE:
+with\_anticipation}\label{sample-with_anticipation}
+
+\begin{verbatim}
+[info] rows=256,622 | CCNs=7665
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (level)}\label{outcome-total_hppd-level}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 256,622
+Fixed-effects: cms_certification_number: 7,665,  year_month: 36
+Standard-errors: Clustered (cms_certification_number & year_month) 
+               Estimate Std. Error t value           Pr(>|t|)    
+post           -0.08597   0.019198  -4.478 0.0000767510407513 ***
+government      0.00381   0.026504   0.144 0.8865749760402450    
+non_profit     -0.03042   0.034059  -0.893 0.3778509659023068    
+chain          -0.01543   0.014134  -1.091 0.2825700660849799    
+beds           -0.00331   0.000650  -5.098 0.0000119141584465 ***
+occupancy_rate -0.01124   0.000981 -11.461 0.0000000000002131 ***
+pct_medicare    0.00507   0.001394   3.637 0.0008788073665611 ***
+pct_medicaid   -0.00020   0.000371  -0.538 0.5938654507626122    
+cm_q_state_2   -0.00387   0.007550  -0.512 0.6116522625612657    
+cm_q_state_3    0.00121   0.010256   0.118 0.9066243484756895    
+cm_q_state_4    0.00675   0.014511   0.466 0.6444507785196041    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.855979     Adj. R2: 0.443296
+                 Within R2: 0.004536
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 256,520
+Fixed-effects: cms_certification_number: 7,665,  year_month: 36
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value              Pr(>|t|)    
+post           -0.026062   0.006280  -4.150 0.0002019579195395278 ***
+government     -0.002852   0.008885  -0.321 0.7501619824047027763    
+non_profit     -0.003287   0.010251  -0.321 0.7504177096218498377    
+chain          -0.005082   0.004268  -1.191 0.2418328733753461468    
+beds           -0.000742   0.000143  -5.190 0.0000090402818647552 ***
+occupancy_rate -0.002603   0.000193 -13.497 0.0000000000000019493 ***
+pct_medicare    0.001037   0.000342   3.029 0.0045920096708091636 ** 
+pct_medicaid   -0.000021   0.000114  -0.183 0.8557251666586394023    
+cm_q_state_2    0.004505   0.001719   2.621 0.0128832066474654627 *  
+cm_q_state_3    0.008225   0.002027   4.057 0.0002644801345540953 ***
+cm_q_state_4    0.010402   0.002490   4.177 0.0001866030756160370 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.118151     Adj. R2: 0.741477
+                 Within R2: 0.012805
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_I}\label{sample-without_anticipation_i}
+
+\begin{verbatim}
+[info] rows=252,976 | CCNs=7664
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-1}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 252,976
+Fixed-effects: cms_certification_number: 7,664,  year_month: 36
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value            Pr(>|t|)    
+post           -0.110677   0.024326  -4.550 0.00006199655664264 ***
+government      0.007062   0.028223   0.250 0.80386915537610693    
+non_profit     -0.014846   0.032516  -0.457 0.65079270277534040    
+chain          -0.021494   0.014358  -1.497 0.14336584968740007    
+beds           -0.003289   0.000676  -4.867 0.00002395535369500 ***
+occupancy_rate -0.011338   0.001006 -11.267 0.00000000000034142 ***
+pct_medicare    0.005187   0.001426   3.637 0.00088019852931707 ***
+pct_medicaid   -0.000203   0.000381  -0.535 0.59620710867745708    
+cm_q_state_2   -0.003468   0.007603  -0.456 0.65114992709207575    
+cm_q_state_3    0.001108   0.010454   0.106 0.91620625342857964    
+cm_q_state_4    0.006229   0.014840   0.420 0.67725580710302236    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.860298     Adj. R2: 0.442094
+                 Within R2: 0.004485
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-1}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 252,885
+Fixed-effects: cms_certification_number: 7,664,  year_month: 36
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                   Estimate Std. Error   t value              Pr(>|t|)    
+post           -0.034039457   0.007323  -4.64811 0.0000462205184649090 ***
+government     -0.000092194   0.008821  -0.01045 0.9917206094708890252    
+non_profit      0.000200107   0.010145   0.01972 0.9843757480139403437    
+chain          -0.006834169   0.004188  -1.63177 0.1116937541535839573    
+beds           -0.000721727   0.000147  -4.90545 0.0000213390196566608 ***
+occupancy_rate -0.002620778   0.000193 -13.60337 0.0000000000000015461 ***
+pct_medicare    0.001074563   0.000347   3.09252 0.0038835366557413600 ** 
+pct_medicaid   -0.000000512   0.000116  -0.00442 0.9964962336954883426    
+cm_q_state_2    0.004534247   0.001701   2.66599 0.0115388469665724455 *  
+cm_q_state_3    0.008244360   0.002009   4.10352 0.0002311564672117095 ***
+cm_q_state_4    0.010329605   0.002521   4.09720 0.0002354562681597010 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.117021     Adj. R2: 0.745589
+                 Within R2: 0.013056
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_II}\label{sample-without_anticipation_ii}
+
+\begin{verbatim}
+[info] rows=254,776 | CCNs=7665
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-2}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 254,776
+Fixed-effects: cms_certification_number: 7,665,  year_month: 36
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error  t value            Pr(>|t|)    
+post           -0.101739   0.021012  -4.8420 0.00002583445149775 ***
+government      0.001585   0.027857   0.0569 0.95494894971691635    
+non_profit     -0.026922   0.034428  -0.7820 0.43948393259410645    
+chain          -0.015883   0.014350  -1.1069 0.27590296379175216    
+beds           -0.003268   0.000660  -4.9498 0.00001867002309086 ***
+occupancy_rate -0.011320   0.000994 -11.3877 0.00000000000025442 ***
+pct_medicare    0.005178   0.001407   3.6805 0.00077811555901732 ***
+pct_medicaid   -0.000186   0.000371  -0.5016 0.61910071506306619    
+cm_q_state_2   -0.003685   0.007538  -0.4889 0.62798121449168254    
+cm_q_state_3    0.001177   0.010370   0.1135 0.91026746779571321    
+cm_q_state_4    0.005763   0.014772   0.3902 0.69878164516688912    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.858379     Adj. R2: 0.442587
+                 Within R2: 0.004538
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-2}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 254,677
+Fixed-effects: cms_certification_number: 7,665,  year_month: 36
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value              Pr(>|t|)    
+post           -0.031354   0.006806  -4.606 0.0000523480556289035 ***
+government     -0.001512   0.008719  -0.173 0.8633443652343804064    
+non_profit     -0.002053   0.010404  -0.197 0.8446740553958903552    
+chain          -0.005100   0.004282  -1.191 0.2416546156388942324    
+beds           -0.000726   0.000145  -5.004 0.0000158439273068992 ***
+occupancy_rate -0.002609   0.000193 -13.485 0.0000000000000020006 ***
+pct_medicare    0.001064   0.000345   3.085 0.0039574959045441012 ** 
+pct_medicaid   -0.000013   0.000113  -0.112 0.9118006989657027050    
+cm_q_state_2    0.004533   0.001708   2.654 0.0118809563912008372 *  
+cm_q_state_3    0.008272   0.002007   4.122 0.0002192333539252505 ***
+cm_q_state_4    0.010192   0.002517   4.049 0.0002708098911481125 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.117889     Adj. R2: 0.742595
+                 Within R2: 0.012913
+\end{verbatim}
+
+\subsection{SCENARIO:
+pandemic\_2020q2\_2024q2}\label{scenario-pandemic_2020q2_2024q2}
+
+\subsubsection{SAMPLE:
+with\_anticipation}\label{sample-with_anticipation-1}
+
+\begin{verbatim}
+[info] rows=363,450 | CCNs=7506
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-3}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 363,450
+Fixed-effects: cms_certification_number: 7,506,  year_month: 51
+Standard-errors: Clustered (cms_certification_number & year_month) 
+               Estimate Std. Error t value         Pr(>|t|)    
+post           -0.00598   0.021399  -0.279 0.78116710479621    
+government     -0.01400   0.033150  -0.422 0.67456575243486    
+non_profit      0.19218   0.049168   3.909 0.00027974257056 ***
+chain          -0.03338   0.020599  -1.620 0.11148134194388    
+beds           -0.00172   0.000529  -3.262 0.00199937158549 ** 
+occupancy_rate -0.01044   0.001307  -7.988 0.00000000017383 ***
+pct_medicare    0.00374   0.002304   1.622 0.11118468516017    
+pct_medicaid    0.00022   0.000395   0.557 0.58031560284137    
+cm_q_state_2   -0.01843   0.012126  -1.519 0.13494014143156    
+cm_q_state_3   -0.01299   0.024332  -0.534 0.59592009377132    
+cm_q_state_4    0.00606   0.036464   0.166 0.86876299278723    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 3.27991     Adj. R2: 0.072546
+                Within R2: 4.673e-4
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-3}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 362,967
+Fixed-effects: cms_certification_number: 7,505,  year_month: 51
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value       Pr(>|t|)    
+post           -0.008417   0.006872  -1.225 0.226364312305    
+government     -0.012003   0.012478  -0.962 0.340721200322    
+non_profit      0.050108   0.015398   3.254 0.002042396833 ** 
+chain          -0.008485   0.006663  -1.274 0.208703385800    
+beds           -0.000493   0.000114  -4.325 0.000072911167 ***
+occupancy_rate -0.002566   0.000149 -17.183      < 2.2e-16 ***
+pct_medicare    0.000413   0.000248   1.667 0.101777308126    
+pct_medicaid    0.000025   0.000083   0.306 0.760787162127    
+cm_q_state_2    0.004978   0.002091   2.381 0.021117186264 *  
+cm_q_state_3    0.013586   0.002759   4.925 0.000009627850 ***
+cm_q_state_4    0.023285   0.003703   6.287 0.000000078121 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.169238     Adj. R2: 0.630965
+                 Within R2: 0.011142
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_I}\label{sample-without_anticipation_i-1}
+
+\begin{verbatim}
+[info] rows=358,770 | CCNs=7506
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-4}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 358,770
+Fixed-effects: cms_certification_number: 7,506,  year_month: 51
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value         Pr(>|t|)    
+post           -0.038378   0.024191  -1.586 0.11894272745259    
+government     -0.008289   0.032973  -0.251 0.80254951611223    
+non_profit      0.201113   0.051578   3.899 0.00028821086936 ***
+chain          -0.042673   0.021194  -2.013 0.04947246826841 *  
+beds           -0.001749   0.000537  -3.259 0.00201588507546 ** 
+occupancy_rate -0.010473   0.001336  -7.839 0.00000000029509 ***
+pct_medicare    0.003906   0.002347   1.664 0.10228212052207    
+pct_medicaid    0.000254   0.000395   0.643 0.52346008191334    
+cm_q_state_2   -0.019233   0.012155  -1.582 0.11987779872798    
+cm_q_state_3   -0.014730   0.024535  -0.600 0.55096577217161    
+cm_q_state_4    0.003500   0.036834   0.095 0.92467989412316    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 3.30033     Adj. R2: 0.071958
+                Within R2: 4.669e-4
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-4}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 358,367
+Fixed-effects: cms_certification_number: 7,505,  year_month: 51
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value      Pr(>|t|)    
+post           -0.018238   0.007095  -2.571 0.01317542925 *  
+government     -0.012208   0.012619  -0.967 0.33800701650    
+non_profit      0.049585   0.014931   3.321 0.00168131664 ** 
+chain          -0.010056   0.006665  -1.509 0.13762775685    
+beds           -0.000493   0.000114  -4.325 0.00007281942 ***
+occupancy_rate -0.002555   0.000148 -17.250     < 2.2e-16 ***
+pct_medicare    0.000446   0.000248   1.798 0.07818216225 .  
+pct_medicaid    0.000032   0.000083   0.386 0.70092639183    
+cm_q_state_2    0.004959   0.002055   2.413 0.01951042616 *  
+cm_q_state_3    0.013500   0.002717   4.969 0.00000826621 ***
+cm_q_state_4    0.022555   0.003688   6.115 0.00000014491 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.16546     Adj. R2: 0.642084
+                Within R2: 0.011616
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_II}\label{sample-without_anticipation_ii-1}
+
+\begin{verbatim}
+[info] rows=361,137 | CCNs=7506
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-5}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 361,137
+Fixed-effects: cms_certification_number: 7,506,  year_month: 51
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value         Pr(>|t|)    
+post           -0.029367   0.022547  -1.302 0.19871541999291    
+government     -0.009873   0.033178  -0.298 0.76726853579518    
+non_profit      0.198190   0.050490   3.925 0.00026532529114 ***
+chain          -0.036939   0.020675  -1.787 0.08006313588355 .  
+beds           -0.001780   0.000535  -3.330 0.00163557010236 ** 
+occupancy_rate -0.010516   0.001324  -7.944 0.00000000020315 ***
+pct_medicare    0.003841   0.002326   1.651 0.10491721701115    
+pct_medicaid    0.000213   0.000392   0.542 0.58988933005716    
+cm_q_state_2   -0.018864   0.012143  -1.553 0.12662281789175    
+cm_q_state_3   -0.013924   0.024389  -0.571 0.57061085449510    
+cm_q_state_4    0.004612   0.036584   0.126 0.90018643127447    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 3.28993     Adj. R2: 0.072264
+                Within R2: 4.738e-4
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-5}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 360,700
+Fixed-effects: cms_certification_number: 7,505,  year_month: 51
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value       Pr(>|t|)    
+post           -0.015672   0.006975  -2.247 0.029086846915 *  
+government     -0.013019   0.012586  -1.034 0.305930746989    
+non_profit      0.047148   0.015166   3.109 0.003098048790 ** 
+chain          -0.007962   0.006578  -1.210 0.231825014731    
+beds           -0.000502   0.000114  -4.399 0.000057001907 ***
+occupancy_rate -0.002570   0.000149 -17.205      < 2.2e-16 ***
+pct_medicare    0.000430   0.000246   1.749 0.086404828528 .  
+pct_medicaid    0.000021   0.000082   0.257 0.797975641731    
+cm_q_state_2    0.005069   0.002090   2.425 0.018964806113 *  
+cm_q_state_3    0.013715   0.002752   4.983 0.000007882798 ***
+cm_q_state_4    0.023043   0.003672   6.275 0.000000081533 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.167263     Adj. R2: 0.636824
+                 Within R2: 0.011502
+\end{verbatim}
+
+\subsection{SCENARIO: for\_profit\_only}\label{scenario-for_profit_only}
+
+\subsubsection{SAMPLE:
+with\_anticipation}\label{sample-with_anticipation-2}
+
+\begin{verbatim}
+[info] rows=464,794 | CCNs=6022
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-6}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 464,793
+Fixed-effects: cms_certification_number: 6,021,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value     Pr(>|t|)    
+post           -0.069830   0.014722  -4.743 0.0000079538 ***
+chain          -0.047472   0.013071  -3.632 0.0004699112 ***
+beds           -0.001697   0.000503  -3.371 0.0011080619 ** 
+occupancy_rate -0.010435   0.000626 -16.672    < 2.2e-16 ***
+pct_medicare    0.004093   0.000832   4.920 0.0000039434 ***
+pct_medicaid   -0.000903   0.000283  -3.196 0.0019296147 ** 
+cm_q_state_2    0.001143   0.008217   0.139 0.8897333544    
+cm_q_state_3    0.025145   0.010352   2.429 0.0171511029 *  
+cm_q_state_4    0.058864   0.014097   4.176 0.0000690740 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 1.42791     Adj. R2: 0.17249 
+                Within R2: 0.003529
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-6}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 464,330
+Fixed-effects: cms_certification_number: 6,020,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value               Pr(>|t|)    
+post           -0.021734   0.004839   -4.49 0.00002115827107744963 ***
+chain          -0.012154   0.004456   -2.73 0.00768969736660407230 ** 
+beds           -0.000393   0.000147   -2.68 0.00888594937310563382 ** 
+occupancy_rate -0.002511   0.000148  -16.99              < 2.2e-16 ***
+pct_medicare    0.000809   0.000222    3.65 0.00044358172295432392 ***
+pct_medicaid   -0.000272   0.000082   -3.32 0.00131128836316580068 ** 
+cm_q_state_2    0.007981   0.001903    4.19 0.00006456374361506987 ***
+cm_q_state_3    0.018362   0.002338    7.85 0.00000000000865978972 ***
+cm_q_state_4    0.028916   0.002906    9.95 0.00000000000000040621 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.160348     Adj. R2: 0.597836
+                 Within R2: 0.017371
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_I}\label{sample-without_anticipation_i-2}
+
+\begin{verbatim}
+[info] rows=457,231 | CCNs=6003
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-7}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 457,230
+Fixed-effects: cms_certification_number: 6,002,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error  t value     Pr(>|t|)    
+post           -0.082425   0.015994  -5.1535 0.0000015264 ***
+chain          -0.053195   0.013428  -3.9615 0.0001498952 ***
+beds           -0.001618   0.000503  -3.2152 0.0018168759 ** 
+occupancy_rate -0.010565   0.000636 -16.6148    < 2.2e-16 ***
+pct_medicare    0.004122   0.000843   4.8873 0.0000044924 ***
+pct_medicaid   -0.000932   0.000285  -3.2709 0.0015259683 ** 
+cm_q_state_2    0.000541   0.008305   0.0651 0.9482225234    
+cm_q_state_3    0.024004   0.010593   2.2659 0.0258819126 *  
+cm_q_state_4    0.058272   0.014463   4.0292 0.0001176543 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 1.43754     Adj. R2: 0.171169
+                Within R2: 0.003543
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-7}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 456,847
+Fixed-effects: cms_certification_number: 6,002,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value               Pr(>|t|)    
+post           -0.025309   0.005148   -4.92 0.00000400511007730031 ***
+chain          -0.013587   0.004487   -3.03 0.00322212971958105122 ** 
+beds           -0.000373   0.000148   -2.51 0.01380710947186464428 *  
+occupancy_rate -0.002538   0.000148  -17.16              < 2.2e-16 ***
+pct_medicare    0.000814   0.000225    3.62 0.00048252171869558511 ***
+pct_medicaid   -0.000274   0.000083   -3.32 0.00131464652884825560 ** 
+cm_q_state_2    0.007939   0.001870    4.25 0.00005326822571327289 ***
+cm_q_state_3    0.018295   0.002324    7.87 0.00000000000795300667 ***
+cm_q_state_4    0.028754   0.002920    9.85 0.00000000000000066659 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.156947     Adj. R2: 0.608756
+                 Within R2: 0.018356
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_II}\label{sample-without_anticipation_ii-2}
+
+\begin{verbatim}
+[info] rows=460,975 | CCNs=6011
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-8}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 460,971
+Fixed-effects: cms_certification_number: 6,007,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error  t value     Pr(>|t|)    
+post           -0.077106   0.015268  -5.0500 0.0000023303 ***
+chain          -0.048735   0.013233  -3.6828 0.0003953135 ***
+beds           -0.001705   0.000505  -3.3762 0.0010910621 ** 
+occupancy_rate -0.010548   0.000632 -16.6858    < 2.2e-16 ***
+pct_medicare    0.004129   0.000837   4.9338 0.0000037281 ***
+pct_medicaid   -0.000903   0.000282  -3.1966 0.0019253550 ** 
+cm_q_state_2    0.000753   0.008272   0.0911 0.9276517281    
+cm_q_state_3    0.024662   0.010460   2.3577 0.0205778983 *  
+cm_q_state_4    0.058334   0.014254   4.0926 0.0000935877 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 1.43281     Adj. R2: 0.171822
+                Within R2: 0.00356 
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-8}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 460,548
+Fixed-effects: cms_certification_number: 6,006,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value               Pr(>|t|)    
+post           -0.023757   0.004991   -4.76 0.00000745521292353673 ***
+chain          -0.012039   0.004472   -2.69 0.00847616167464016607 ** 
+beds           -0.000396   0.000148   -2.68 0.00884441469602877291 ** 
+occupancy_rate -0.002529   0.000149  -17.02              < 2.2e-16 ***
+pct_medicare    0.000823   0.000222    3.70 0.00036892630396142092 ***
+pct_medicaid   -0.000268   0.000082   -3.27 0.00153000698698895128 ** 
+cm_q_state_2    0.008064   0.001876    4.30 0.00004388067861841809 ***
+cm_q_state_3    0.018622   0.002328    8.00 0.00000000000434296853 ***
+cm_q_state_4    0.029036   0.002900   10.01 0.00000000000000030146 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.158734     Adj. R2: 0.603091
+                 Within R2: 0.017919
+\end{verbatim}
+
+\subsection{SCENARIO:
+baseline\_chain\_2017q1}\label{scenario-baseline_chain_2017q1}
+
+\subsubsection{SAMPLE:
+with\_anticipation}\label{sample-with_anticipation-3}
+
+\begin{verbatim}
+[info] rows=325,038 | CCNs=3825
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-9}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 325,038
+Fixed-effects: cms_certification_number: 3,825,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value       Pr(>|t|)    
+post           -0.054074   0.016425  -3.292 0.001426592707 ** 
+government     -0.047544   0.022879  -2.078 0.040579841629 *  
+non_profit      0.136522   0.040258   3.391 0.001039668355 ** 
+chain          -0.043163   0.022258  -1.939 0.055643643818 .  
+beds           -0.002525   0.000647  -3.900 0.000186364268 ***
+occupancy_rate -0.008482   0.000653 -12.982      < 2.2e-16 ***
+pct_medicare    0.006337   0.001090   5.811 0.000000094928 ***
+pct_medicaid   -0.000688   0.000337  -2.038 0.044507664169 *  
+cm_q_state_2    0.007366   0.009811   0.751 0.454758628893    
+cm_q_state_3    0.030048   0.012715   2.363 0.020297450445 *  
+cm_q_state_4    0.050699   0.017882   2.835 0.005666633968 ** 
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 1.03018     Adj. R2: 0.297808
+                Within R2: 0.004964
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-9}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 324,842
+Fixed-effects: cms_certification_number: 3,825,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value           Pr(>|t|)    
+post           -0.016007   0.005074  -3.154 0.0021932866514025 ** 
+government     -0.022653   0.008604  -2.633 0.0099856217994226 ** 
+non_profit      0.046169   0.016007   2.884 0.0049189078595334 ** 
+chain          -0.004632   0.005986  -0.774 0.4411061829423467    
+beds           -0.000622   0.000167  -3.734 0.0003324681872850 ***
+occupancy_rate -0.002110   0.000152 -13.905          < 2.2e-16 ***
+pct_medicare    0.001521   0.000287   5.300 0.0000008320581418 ***
+pct_medicaid   -0.000299   0.000095  -3.137 0.0023174292550630 ** 
+cm_q_state_2    0.008742   0.001972   4.433 0.0000264576260226 ***
+cm_q_state_3    0.017622   0.002463   7.155 0.0000000002263816 ***
+cm_q_state_4    0.025206   0.003177   7.933 0.0000000000059571 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.147253     Adj. R2: 0.606812
+                 Within R2: 0.017445
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_I}\label{sample-without_anticipation_i-3}
+
+\begin{verbatim}
+[info] rows=319,864 | CCNs=3824
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-10}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 319,864
+Fixed-effects: cms_certification_number: 3,824,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value       Pr(>|t|)    
+post           -0.068463   0.017877   -3.83 0.000238444159 ***
+government     -0.051938   0.022777   -2.28 0.024978414147 *  
+non_profit      0.147713   0.040589    3.64 0.000458254929 ***
+chain          -0.055031   0.023737   -2.32 0.022723980735 *  
+beds           -0.002447   0.000647   -3.78 0.000281923137 ***
+occupancy_rate -0.008510   0.000664  -12.82      < 2.2e-16 ***
+pct_medicare    0.006573   0.001094    6.01 0.000000040406 ***
+pct_medicaid   -0.000663   0.000334   -1.99 0.050162728800 .  
+cm_q_state_2    0.005998   0.009991    0.60 0.549845019675    
+cm_q_state_3    0.028371   0.012969    2.19 0.031321784217 *  
+cm_q_state_4    0.049219   0.018262    2.70 0.008409931377 ** 
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 1.03583     Adj. R2: 0.296744
+                Within R2: 0.004978
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-10}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 319,716
+Fixed-effects: cms_certification_number: 3,824,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value          Pr(>|t|)    
+post           -0.018433   0.005271   -3.50 0.000736112257816 ***
+government     -0.025155   0.008525   -2.95 0.004051270573175 ** 
+non_profit      0.048477   0.015478    3.13 0.002350507783514 ** 
+chain          -0.007157   0.006126   -1.17 0.245797932016229    
+beds           -0.000608   0.000167   -3.64 0.000454128004208 ***
+occupancy_rate -0.002112   0.000152  -13.94         < 2.2e-16 ***
+pct_medicare    0.001594   0.000289    5.52 0.000000325173839 ***
+pct_medicaid   -0.000285   0.000096   -2.96 0.003885618028213 ** 
+cm_q_state_2    0.008250   0.001996    4.13 0.000080945302741 ***
+cm_q_state_3    0.017168   0.002473    6.94 0.000000000601111 ***
+cm_q_state_4    0.024631   0.003199    7.70 0.000000000017801 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.144402     Adj. R2: 0.616556
+                 Within R2: 0.018218
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_II}\label{sample-without_anticipation_ii-3}
+
+\begin{verbatim}
+[info] rows=322,446 | CCNs=3825
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-11}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 322,446
+Fixed-effects: cms_certification_number: 3,825,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value       Pr(>|t|)    
+post           -0.059792   0.016979  -3.522 0.000678955248 ***
+government     -0.052146   0.022971  -2.270 0.025619579098 *  
+non_profit      0.146910   0.040943   3.588 0.000544066176 ***
+chain          -0.043624   0.022712  -1.921 0.057964080101 .  
+beds           -0.002507   0.000651  -3.848 0.000223721464 ***
+occupancy_rate -0.008529   0.000656 -13.001      < 2.2e-16 ***
+pct_medicare    0.006502   0.001092   5.957 0.000000050431 ***
+pct_medicaid   -0.000662   0.000333  -1.985 0.050260449934 .  
+cm_q_state_2    0.006547   0.009869   0.663 0.508826712461    
+cm_q_state_3    0.029603   0.012771   2.318 0.022741508808 *  
+cm_q_state_4    0.049965   0.017974   2.780 0.006634514347 ** 
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 1.03315     Adj. R2: 0.297252
+                Within R2: 0.005017
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-11}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 322,276
+Fixed-effects: cms_certification_number: 3,825,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value           Pr(>|t|)    
+post           -0.016770   0.005256  -3.191 0.0019593067541937 ** 
+government     -0.025240   0.008615  -2.930 0.0043068973748133 ** 
+non_profit      0.047457   0.016086   2.950 0.0040566283193262 ** 
+chain          -0.003913   0.006097  -0.642 0.5226397672159808    
+beds           -0.000618   0.000168  -3.684 0.0003942823419307 ***
+occupancy_rate -0.002110   0.000152 -13.904          < 2.2e-16 ***
+pct_medicare    0.001576   0.000287   5.485 0.0000003827652615 ***
+pct_medicaid   -0.000287   0.000095  -3.013 0.0033658687076001 ** 
+cm_q_state_2    0.008538   0.001976   4.322 0.0000401919384830 ***
+cm_q_state_3    0.017587   0.002453   7.169 0.0000000002121683 ***
+cm_q_state_4    0.025019   0.003182   7.864 0.0000000000082665 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.146807     Adj. R2: 0.608575
+                 Within R2: 0.0177  
+\end{verbatim}
+
+\subsection{SCENARIO:
+baseline\_nonchain\_2017q1}\label{scenario-baseline_nonchain_2017q1}
+
+\subsubsection{SAMPLE:
+with\_anticipation}\label{sample-with_anticipation-4}
+
+\begin{verbatim}
+[info] rows=246,632 | CCNs=2976
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-12}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 246,632
+Fixed-effects: cms_certification_number: 2,976,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value    Pr(>|t|)    
+post           -0.100795   0.028231  -3.570 0.000577428 ***
+government     -0.054689   0.039994  -1.367 0.174931762    
+non_profit     -0.046597   0.043050  -1.082 0.282007713    
+chain          -0.096752   0.022868  -4.231 0.000056393 ***
+beds           -0.001983   0.000569  -3.482 0.000772461 ***
+occupancy_rate -0.008453   0.000747 -11.315   < 2.2e-16 ***
+pct_medicare   -0.000423   0.002028  -0.208 0.835377674    
+pct_medicaid   -0.001235   0.000398  -3.101 0.002581565 ** 
+cm_q_state_2    0.015739   0.011415   1.379 0.171422430    
+cm_q_state_3    0.033512   0.023277   1.440 0.153467649    
+cm_q_state_4    0.040883   0.060500   0.676 0.500949955    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 3.86082     Adj. R2: 0.04402 
+                Within R2: 3.464e-4
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-12}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 246,341
+Fixed-effects: cms_certification_number: 2,976,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value           Pr(>|t|)    
+post           -0.023854   0.008481  -2.813 0.0060441327984983 ** 
+government     -0.022421   0.013570  -1.652 0.1020050594639511    
+non_profit     -0.009018   0.011396  -0.791 0.4308310056022026    
+chain          -0.030348   0.006217  -4.881 0.0000045988802582 ***
+beds           -0.000447   0.000132  -3.379 0.0010821315727689 ** 
+occupancy_rate -0.002201   0.000191 -11.504          < 2.2e-16 ***
+pct_medicare    0.000341   0.000302   1.128 0.2624878815817178    
+pct_medicaid   -0.000302   0.000126  -2.401 0.0184475931369802 *  
+cm_q_state_2    0.009661   0.002639   3.661 0.0004263417711268 ***
+cm_q_state_3    0.021028   0.003195   6.582 0.0000000031176891 ***
+cm_q_state_4    0.033093   0.004041   8.188 0.0000000000017822 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.164704     Adj. R2: 0.647445
+                 Within R2: 0.015814
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_I}\label{sample-without_anticipation_i-4}
+
+\begin{verbatim}
+[info] rows=244,228 | CCNs=2976
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-13}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 244,228
+Fixed-effects: cms_certification_number: 2,976,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value    Pr(>|t|)    
+post           -0.121258   0.030867  -3.928 0.000168531 ***
+government     -0.053900   0.041210  -1.308 0.194264158    
+non_profit     -0.054712   0.044052  -1.242 0.217506890    
+chain          -0.098069   0.023084  -4.248 0.000052855 ***
+beds           -0.001941   0.000570  -3.404 0.000998903 ***
+occupancy_rate -0.008593   0.000754 -11.395   < 2.2e-16 ***
+pct_medicare   -0.000508   0.002061  -0.247 0.805715184    
+pct_medicaid   -0.001294   0.000401  -3.226 0.001756557 ** 
+cm_q_state_2    0.015920   0.011543   1.379 0.171285798    
+cm_q_state_3    0.032424   0.023608   1.373 0.173077141    
+cm_q_state_4    0.040133   0.061261   0.655 0.514086028    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 3.87923     Adj. R2: 0.043711
+                Within R2: 3.544e-4
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-13}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 243,961
+Fixed-effects: cms_certification_number: 2,976,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value           Pr(>|t|)    
+post           -0.030153   0.009176  -3.286 0.0014552211239910 ** 
+government     -0.019648   0.013826  -1.421 0.1587962161223396    
+non_profit     -0.010527   0.011590  -0.908 0.3661826593546772    
+chain          -0.029754   0.006189  -4.808 0.0000061680268784 ***
+beds           -0.000429   0.000133  -3.235 0.0017100452452281 ** 
+occupancy_rate -0.002234   0.000191 -11.711          < 2.2e-16 ***
+pct_medicare    0.000315   0.000306   1.029 0.3060719101543098    
+pct_medicaid   -0.000318   0.000126  -2.515 0.0136922505474050 *  
+cm_q_state_2    0.010150   0.002569   3.952 0.0001552839863370 ***
+cm_q_state_3    0.021075   0.003144   6.704 0.0000000017944379 ***
+cm_q_state_4    0.033307   0.004012   8.302 0.0000000000010416 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.162167     Adj. R2: 0.654973
+                 Within R2: 0.016627
+\end{verbatim}
+
+\subsubsection{SAMPLE:
+without\_anticipation\_II}\label{sample-without_anticipation_ii-4}
+
+\begin{verbatim}
+[info] rows=245,417 | CCNs=2976
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd
+(level)}\label{outcome-total_hppd-level-14}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: total_hppd
+Observations: 245,417
+Fixed-effects: cms_certification_number: 2,976,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value    Pr(>|t|)    
+post           -0.113210   0.029301  -3.864 0.000211688 ***
+government     -0.057309   0.040699  -1.408 0.162571467    
+non_profit     -0.051411   0.043712  -1.176 0.242677627    
+chain          -0.098228   0.022914  -4.287 0.000045821 ***
+beds           -0.002007   0.000571  -3.515 0.000694603 ***
+occupancy_rate -0.008550   0.000750 -11.396   < 2.2e-16 ***
+pct_medicare   -0.000455   0.002049  -0.222 0.824769621    
+pct_medicaid   -0.001250   0.000400  -3.128 0.002381013 ** 
+cm_q_state_2    0.015724   0.011460   1.372 0.173515932    
+cm_q_state_3    0.032585   0.023401   1.392 0.167247420    
+cm_q_state_4    0.040316   0.060808   0.663 0.509040038    
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 3.87006     Adj. R2: 0.043867
+                Within R2: 3.534e-4
+\end{verbatim}
+
+\paragraph{OUTCOME: total\_hppd (log)}\label{outcome-total_hppd-log-14}
+
+\begin{verbatim}
+OLS estimation, Dep. Var.: ln_total
+Observations: 245,143
+Fixed-effects: cms_certification_number: 2,976,  year_month: 90
+Standard-errors: Clustered (cms_certification_number & year_month) 
+                Estimate Std. Error t value            Pr(>|t|)    
+post           -0.028441   0.008708  -3.266 0.00154886810215214 ** 
+government     -0.021008   0.013750  -1.528 0.13007924349994973    
+non_profit     -0.010066   0.011516  -0.874 0.38441289294913239    
+chain          -0.029566   0.006123  -4.828 0.00000567897626831 ***
+beds           -0.000450   0.000133  -3.389 0.00104642220094042 ** 
+occupancy_rate -0.002225   0.000192 -11.617           < 2.2e-16 ***
+pct_medicare    0.000332   0.000303   1.097 0.27553168064827399    
+pct_medicaid   -0.000306   0.000126  -2.433 0.01699186811850637 *  
+cm_q_state_2    0.009997   0.002577   3.880 0.00019993483439642 ***
+cm_q_state_3    0.021130   0.003159   6.689 0.00000000192474602 ***
+cm_q_state_4    0.033336   0.004004   8.325 0.00000000000093366 ***
+---
+Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+RMSE: 0.162464     Adj. R2: 0.653923
+                 Within R2: 0.016534
+\end{verbatim}
+
+Done.
+
+\end{document}
