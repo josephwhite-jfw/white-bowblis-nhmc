@@ -1,0 +1,271 @@
+---
+title: "Pretrend Tests for All Models"
+author: "Joe White"
+date: "`r format(Sys.Date(), '%B %d, %Y')`"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    toc: false
+    number_sections: false
+fontsize: 11pt
+geometry: margin=1in
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+options(scipen = 999, digits = 3)
+```
+
+```{r libraries}
+suppressPackageStartupMessages({
+  library(fixest)
+  library(readr)
+  library(dplyr)
+  library(MASS)     # for ginv
+  library(knitr)
+})
+```
+
+```{r load-and-prepare}
+# ===== Load panel =====
+panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
+
+keep_cols <- c(
+  "cms_certification_number","year_month","anticipation1","anticipation2",
+  "event_time","treatment",
+  "time","time_treated",
+  "government","non_profit","chain","beds",
+  "occupancy_rate","pct_medicare","pct_medicaid",
+  "cm_q_state_2","cm_q_state_3","cm_q_state_4",
+  "rn_hppd","lpn_hppd","cna_hppd","total_hppd"
+)
+
+df <- read_csv(panel_fp, show_col_types = FALSE, col_select = all_of(keep_cols)) %>%
+  mutate(
+    cms_certification_number = as.factor(cms_certification_number),
+    year_month = as.factor(year_month)
+  )
+
+# Ever-treated & cap event_time
+df <- df %>%
+  group_by(cms_certification_number) %>%
+  mutate(ever_treated = as.integer(any(treatment == 1, na.rm = TRUE) | any(!is.na(event_time)))) %>%
+  ungroup() %>%
+  mutate(
+    event_time_capped = dplyr::case_when(
+      ever_treated == 1L & !is.na(event_time) ~ pmin(pmax(as.integer(event_time), -24L), 24L),
+      TRUE ~ 9999L
+    )
+  )
+
+# Logs (only if >0)
+mk_log <- function(x) ifelse(x > 0, log(x), NA_real_)
+df <- df %>%
+  mutate(
+    ln_rn    = mk_log(rn_hppd),
+    ln_lpn   = mk_log(lpn_hppd),
+    ln_cna   = mk_log(cna_hppd),
+    ln_total = mk_log(total_hppd)
+  )
+
+# Controls
+controls_rhs <- paste(
+  "government + non_profit + chain + beds +",
+  "occupancy_rate + pct_medicare + pct_medicaid +",
+  "cm_q_state_2 + cm_q_state_3 + cm_q_state_4"
+)
+
+# Helper: choose a valid ref present in data
+pick_ref <- function(dat, desired = NULL) {
+  ev <- sort(unique(dat$event_time_capped[dat$ever_treated == 1L]))
+  if (length(ev) == 0L) stop("No treated event times found.")
+  if (!is.null(desired) && desired %in% ev) return(as.integer(desired))
+  if (-1L %in% ev) return(-1L)
+  if ( 0L %in% ev) return(0L)
+  negs <- ev[ev < 0L]
+  if (length(negs)) return(max(negs))
+  ev[1]
+}
+
+# Model runner
+run_es_twfe <- function(lhs, data, ref_val) {
+  fml <- as.formula(paste0(
+    lhs, " ~ i(event_time_capped, ever_treated, ref = ", ref_val, ", keep = -24:24) + ",
+    controls_rhs,
+    " | cms_certification_number + year_month"
+  ))
+  feols(
+    fml,
+    data = data,
+    vcov = ~ cms_certification_number + year_month,
+    lean = TRUE
+  )
+}
+```
+
+```{r build-spec-datasets}
+# ===== Build specs & references =====
+
+# WITH anticipation
+
+ref_full <- pick_ref(df, desired = -1L)
+
+# Donut1: drop -3..+2 for treated rows; ref = -4
+
+skip1 <- c(-3L,-2L,-1L,0L,1L,2L)
+df_noant1 <- df %>% filter(!(ever_treated == 1L & event_time_capped %in% skip1))
+ref_noant1 <- pick_ref(df_noant1, desired = -4L)
+
+# Donut2: drop -3..-1 for treated rows; ref = -4
+
+skip2 <- c(-3L,-2L,-1L)
+df_noant2 <- df %>% filter(!(ever_treated == 1L & event_time_capped %in% skip2))
+ref_noant2 <- pick_ref(df_noant2, desired = -4L)
+
+specs <- list(
+with_anticipation = list(data = df,        ref = ref_full,   label = "With anticipation"),
+donut1            = list(data = df_noant1, ref = ref_noant1, label = "W/o anticipation I"),
+donut2            = list(data = df_noant2, ref = ref_noant2, label = "W/o anticipation II")
+)
+```
+
+```{r fit-all-models}
+# ===== Fit all models (levels + logs) =====
+
+outcomes <- c("rn_hppd","lpn_hppd","cna_hppd","total_hppd")
+logmap   <- c(rn_hppd="ln_rn", lpn_hppd="ln_lpn", cna_hppd="ln_cna", total_hppd="ln_total")
+
+models <- list()
+for (sp in names(specs)) {
+spd  <- specs[[sp]]$data
+rref <- specs[[sp]]$ref
+models[[sp]] <- list(level = list(), log = list())
+
+# levels
+
+for (y in outcomes) {
+models[[sp]]$level[[y]] <- tryCatch(run_es_twfe(y, spd, rref), error = function(e) NULL)
+}
+
+# logs
+
+for (y in outcomes) {
+lhs <- logmap[[y]]
+if (!all(is.na(spd[[lhs]]))) {
+models[[sp]]$log[[y]] <- tryCatch(run_es_twfe(lhs, spd, rref), error = function(e) NULL)
+} else {
+models[[sp]]$log[[y]] <- NULL
+}
+}
+}
+```
+
+```{r pretrend-helpers}
+# ===== Pretrend testing helpers =====
+
+# Extract ES coef names & taus like "event_time_capped::-24:ever_treated"
+
+# Avoid \d; use [0-9]+ to prevent escape issues.
+
+.es_pick <- function(mod, var = "event_time_capped", trt = "ever_treated") {
+cn <- names(coef(mod))
+if (is.null(cn) || !length(cn)) return(list(names = character(0), taus = integer(0)))
+pat <- sprintf("^%s::[-]?[0-9]+:%s$", var, trt)
+es_names <- grep(pat, cn, value = TRUE)
+
+# Extract first signed integer as tau
+
+get_tau <- function(s) as.integer(regmatches(s, regexpr("-?[0-9]+", s)))
+taus <- vapply(es_names, get_tau, integer(1))
+names(taus) <- es_names
+list(names = es_names, taus = taus)
+}
+
+# Joint Wald on pre leads (τ<0, τ≠ref), windowed by [from, to]
+
+pretrend_wald <- function(mod, ref_tau, from = -Inf, to = -2,
+var = "event_time_capped", trt = "ever_treated") {
+if (is.null(mod)) return(list(note = "Model is NULL"))
+es <- .es_pick(mod, var, trt)
+if (!length(es$names)) return(list(note = "No ES coefficients found"))
+pre_idx   <- es$taus < 0 & es$taus != ref_tau & es$taus >= from & es$taus <= to
+pre_names <- names(es$taus)[pre_idx]
+if (!length(pre_names)) return(list(note = "No preperiod coefficients in window"))
+b <- coef(mod)[pre_names]
+V <- vcov(mod)[pre_names, pre_names, drop = FALSE]
+W <- as.numeric(t(b) %*% MASS::ginv(V) %*% b)
+df <- qr(V)$rank
+p  <- pchisq(W, df = df, lower.tail = FALSE)
+list(statistic = W, df = df, p.value = p,
+tested_taus = sort(unique(es$taus[pre_idx])),
+n_constraints = length(pre_names))
+}
+
+# Single nearest-pre bin
+
+nearest_pre_test <- function(mod, ref_tau, var = "event_time_capped", trt = "ever_treated") {
+if (is.null(mod)) return(list(note = "Model is NULL"))
+es <- .es_pick(mod, var, trt)
+cand <- names(es$taus)[es$taus < 0 & es$taus != ref_tau]
+if (!length(cand)) return(list(note = "No preperiod coefficient to test"))
+target <- cand[which.max(es$taus[cand])]
+b  <- coef(mod)[target]
+se <- sqrt(vcov(mod)[target, target])
+z  <- as.numeric(b / se)
+p  <- 2 * pnorm(-abs(z))
+list(coef = b, se = se, z = z, p.value = p, tau = es$taus[target], name = target)
+}
+
+```
+
+```{r build-clean-table}
+# ===== Build clean table for every model (spec × transform × outcome) =====
+
+nice_outcome <- c(rn_hppd="RN HPPD", lpn_hppd="LPN HPPD", cna_hppd="CNA HPPD", total_hppd="Total HPPD")
+
+collect_one <- function(spec_name, spec_info, trans, outcome) {
+mod <- models[[spec_name]][[trans]][[outcome]]
+ref <- specs[[spec_name]]$ref
+label <- paste0(nice_outcome[[outcome]], " — ", spec_info$label,
+if (trans=="log") " (log)" else " (level)")
+
+# window upper bound differs by spec
+
+to_upper <- if (spec_name == "with_anticipation") -2 else -5
+r_all <- pretrend_wald(mod, ref_tau = ref, from = -24, to = to_upper)
+r_win <- pretrend_wald(mod, ref_tau = ref, from = -12, to = to_upper)
+r_near <- nearest_pre_test(mod, ref_tau = ref)
+tibble::tibble(
+Specification = label,
+`Ref (τ)`     = ref,
+`All pre p-value`         = if (!is.null(r_all$p.value)) sprintf("%.4f", r_all$p.value) else NA_character_,
+`Window p-value [-12,-5]` = if (!is.null(r_win$p.value)) sprintf("%.4f", r_win$p.value) else NA_character_,
+`Nearest τ`               = if (!is.null(r_near$tau)) r_near$tau else NA_integer_,
+`Nearest p-value`         = if (!is.null(r_near$p.value)) sprintf("%.4f", r_near$p.value) else NA_character_
+)
+}
+
+rows <- list()
+for (sp in names(specs)) {
+for (tr in c("level","log")) {
+for (y in outcomes) {
+if (tr == "log" && is.null(models[[sp]]$log[[y]])) next
+rows[[length(rows)+1]] <- collect_one(sp, specs[[sp]], tr, y)
+}
+}
+}
+pretrend_table_all <- dplyr::bind_rows(rows)
+```
+
+```{r print-table, results='asis'}
+# ===== PRINT: Clean formatted table =====
+
+kable(
+pretrend_table_all,
+caption = "Pretrend Test Summary — Across Specifications",
+align = "lccccc",
+col.names = c("Specification", "Ref (τ)", "All pre p-value", "Window p-value [-12,-5]", "Nearest t", "Nearest p-value"),
+digits = 4
+)
+
+```
