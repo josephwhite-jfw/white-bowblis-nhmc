@@ -253,3 +253,178 @@ iplot(m_lcna_a2, ref = ref_noant2, xlim = c(-24,24),
 iplot(m_ltot_a2, ref = ref_noant2, xlim = c(-24,24),
       xlab = "Months relative to treatment", ylab = "log(Total HPPD)",
       main = "TWFE ES: Log Total (anticipation2 donut)")
+
+<<<<<<< HEAD
+# ========================= Parallel Trends Test =========================
+# Helper to run a joint Wald test that all pre-treatment (τ<0, τ≠ref) ES
+# coefficients are zero. Works with fixest::feols models that used:
+#   i(event_time_capped, ever_treated, ref = ..., keep = -24:24)
+#
+# Arguments:
+#   mod     : a fixest model object
+#   ref_tau : the reference event time used in that model (e.g., -1 or -4)
+#   prefix  : regex to match ES coefficients (default matches your code)
+#
+pretrend_manual <- function(mod, ref_tau, var = "event_time_capped", trt = "ever_treated") {
+  cn <- names(coef(mod))
+  pat <- sprintf("^%s::-?\\d+:%s$", var, trt)
+  es_names <- grep(pat, cn, value = TRUE)
+  if (!length(es_names)) { message("[warn] No ES coefficients matched."); return(invisible(NULL)) }
+  
+  # extract taus
+  get_tau <- function(s) as.integer(regmatches(s, regexpr("-?\\d+", s)))
+  taus <- vapply(es_names, get_tau, integer(1)); names(taus) <- es_names
+  
+  pre_names <- names(taus)[taus < 0 & taus != ref_tau]
+  if (!length(pre_names)) { message("[info] No pre-treatment coefficients to test."); return(invisible(NULL)) }
+  
+  b  <- coef(mod)[pre_names]
+  V  <- vcov(mod)[pre_names, pre_names, drop = FALSE]
+  
+  # use a generalized inverse in case V is near-singular
+  if (!requireNamespace("MASS", quietly = TRUE)) stop("Please install MASS")
+  W  <- as.numeric(t(b) %*% MASS::ginv(V) %*% b)
+  df <- qr(V)$rank  # effective rank (≤ length(pre_names))
+  p  <- pchisq(W, df = df, lower.tail = FALSE)
+  
+  list(statistic = W, df = df, p.value = p,
+       tested_taus = sort(unique(taus[pre_names])),
+       n_constraints = length(pre_names))
+}
+
+res <- pretrend_manual(m_ltot_a1, ref_tau = ref_noant1)
+res$p.value
+res
+
+# ====================== Parallel-Trend / Pretrend tests ======================
+# Requirements:
+# - Models estimated with: i(event_time_capped, ever_treated, ref = ..., keep = -24:24)
+# - Clustering already set in feols(...) so vcov(mod) is robust
+# - Coef names like: "event_time_capped::-24:ever_treated"
+
+suppressPackageStartupMessages({
+  library(MASS)   # for ginv()
+})
+
+# Parse ES coefficient names and extract taus
+.es_pick <- function(mod, var = "event_time_capped", trt = "ever_treated") {
+  cn <- names(coef(mod))
+  if (is.null(cn) || !length(cn)) return(list(names = character(0), taus = integer(0)))
+  # Match "event_time_capped::-24:ever_treated" exactly (no parentheses in your fit)
+  pat <- sprintf("^%s::-?\\d+:%s$", var, trt)
+  es_names <- grep(pat, cn, value = TRUE)
+  # Extract first signed integer as tau
+  get_tau <- function(s) as.integer(regmatches(s, regexpr("-?\\d+", s)))
+  taus <- vapply(es_names, get_tau, integer(1))
+  names(taus) <- es_names
+  list(names = es_names, taus = taus)
+}
+
+# Joint Wald test on all pre leads (τ<0, excluding the reference), with optional window
+pretrend_wald <- function(mod, ref_tau, from = -Inf, to = -2,
+                          var = "event_time_capped", trt = "ever_treated") {
+  es <- .es_pick(mod, var, trt)
+  if (!length(es$names)) return(invisible(list(note = "No ES coefficients found")))
+  pre_idx <- es$taus < 0 & es$taus != ref_tau & es$taus >= from & es$taus <= to
+  pre_names <- names(es$taus)[pre_idx]
+  if (!length(pre_names)) return(invisible(list(note = "No preperiod coefficients in window")))
+  b <- coef(mod)[pre_names]
+  V <- vcov(mod)[pre_names, pre_names, drop = FALSE]
+  # generalized inverse for stability
+  W <- as.numeric(t(b) %*% MASS::ginv(V) %*% b)
+  df <- qr(V)$rank
+  p  <- pchisq(W, df = df, lower.tail = FALSE)
+  list(statistic = W, df = df, p.value = p,
+       tested_taus = sort(unique(es$taus[pre_idx])),
+       n_constraints = length(pre_names),
+       window = c(from, to))
+}
+
+# Single-bin test on the nearest pre period to the reference (largest τ < 0, τ ≠ ref)
+nearest_pre_test <- function(mod, ref_tau, var = "event_time_capped", trt = "ever_treated") {
+  es <- .es_pick(mod, var, trt)
+  cand <- names(es$taus)[es$taus < 0 & es$taus != ref_tau]
+  if (!length(cand)) return(invisible(list(note = "No preperiod coefficient to test")))
+  # nearest to treatment on the left
+  target <- cand[which.max(es$taus[cand])]
+  b  <- coef(mod)[target]
+  se <- sqrt(vcov(mod)[target, target])
+  z  <- as.numeric(b / se)
+  p  <- 2 * pnorm(-abs(z))
+  list(coef = b, se = se, z = z, p.value = p, tau = es$taus[target], name = target)
+}
+
+# Pretty printer
+print_pretrend <- function(title, res) {
+  cat("\n================ ", title, " ================\n", sep = "")
+  if (!is.null(res$note)) { cat("[info] ", res$note, "\n", sep = ""); return(invisible(NULL)) }
+  if (!is.null(res$statistic)) {
+    cat(sprintf("Joint Wald: W = %.3f on %d df  =>  p = %.4g\n", res$statistic, res$df, res$p.value))
+    cat("Tested pre τ: ", paste(res$tested_taus, collapse = ", "), "\n", sep = "")
+  } else if (!is.null(res$coef)) {
+    cat(sprintf("Nearest-pre (τ=%d): coef = %.4f, se = %.4f, z = %.2f, p = %.4g\n",
+                res$tau, res$coef, res$se, res$z, res$p.value))
+    cat("Name: ", res$name, "\n", sep = "")
+  }
+}
+
+# ====================== EXAMPLES ON YOUR MODELS ======================
+# WITH anticipation (ref usually = -1)
+print_pretrend("total_hppd — full (all pre leads)", 
+               pretrend_wald(m_tot_full, ref_tau = ref_full, from = -24, to = -2))
+print_pretrend("total_hppd — window [-12, -2]",    
+               pretrend_wald(m_tot_full, ref_tau = ref_full, from = -12, to = -2))
+print_pretrend("total_hppd — nearest-pre",       
+               nearest_pre_test(m_tot_full, ref_tau = ref_full))
+
+# Donut 1 (anticipation1): ref = -4, dropped -3..+2
+print_pretrend("ln_total — donut1 (all pre leads)", 
+               pretrend_wald(m_ltot_a1, ref_tau = ref_noant1, from = -24, to = -5))
+print_pretrend("ln_total — donut1 window [-12, -5]", 
+               pretrend_wald(m_ltot_a1, ref_tau = ref_noant1, from = -12, to = -5))
+print_pretrend("ln_total — donut1 nearest-pre",     
+               nearest_pre_test(m_ltot_a1, ref_tau = ref_noant1))
+
+# Donut 2 (anticipation2): ref = -4, dropped -3..-1
+print_pretrend("total_hppd — donut2 (all pre leads)", 
+               pretrend_wald(m_tot_a2, ref_tau = ref_noant2, from = -24, to = -5))
+print_pretrend("total_hppd — donut2 window [-12, -5]", 
+               pretrend_wald(m_tot_a2, ref_tau = ref_noant2, from = -12, to = -5))
+print_pretrend("total_hppd — donut2 nearest-pre",     
+               nearest_pre_test(m_tot_a2, ref_tau = ref_noant2))
+
+# =================== CLEAN PARALLEL TREND SUMMARY TABLE ===================
+library(dplyr)
+library(knitr)
+
+# Helper to run and collect results for a model
+summ_pretrend <- function(label, mod, ref, from = -12, to = -5) {
+  r_all  <- pretrend_wald(mod, ref, from = -24, to = -2)
+  r_win  <- pretrend_wald(mod, ref, from = from,  to = to)
+  r_near <- nearest_pre_test(mod, ref)
+  
+  tibble(
+    Specification   = label,
+    `Ref (τ)`       = ref,
+    `All pre p`     = if (!is.null(r_all$p.value)) sprintf("%.4f", r_all$p.value) else "NA",
+    `Window p [-12,-5]` = if (!is.null(r_win$p.value)) sprintf("%.4f", r_win$p.value) else "NA",
+    `Nearest τ`     = if (!is.null(r_near$tau)) r_near$tau else NA_integer_,
+    `Nearest p`     = if (!is.null(r_near$p.value)) sprintf("%.4f", r_near$p.value) else "NA"
+  )
+}
+
+# Collect results for your key specs
+pretrend_table <- bind_rows(
+  summ_pretrend("Total HPPD — With anticipation", m_tot_full,  ref_full),
+  summ_pretrend("Total HPPD — Donut 1",       m_tot_a1,   ref_noant1),
+  summ_pretrend("Total HPPD — Donut 2",           m_tot_a2,    ref_noant2)
+)
+
+# Print a clean table to console (or include in PDF)
+kable(
+  pretrend_table,
+  caption = "Parallel Trends / Pretrend Test Summary",
+  align = "lccccc",
+  col.names = c("Specification", "Ref (τ)", "All pre p-value", "Window p-value [-12,-5]", "Nearest τ", "Nearest p-value"),
+  digits = 4
+)
