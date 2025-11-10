@@ -371,17 +371,35 @@ panel = bridge_fill_equal(panel, bridge_numeric, group_key="cms_certification_nu
 bridge_binary = [c for c in binary_quarter_fill if c in panel.columns]
 panel = bridge_fill_equal(panel, bridge_binary, group_key="cms_certification_number", numeric=False)
 
-# ============================== Unified 'beds' variable =======================
-# beds = num_beds if present else beds_prov
-if "num_beds" in panel.columns or "beds_prov" in panel.columns:
-    panel["beds"] = panel.get("num_beds", pd.Series([np.nan]*len(panel)))
-    if "beds_prov" in panel.columns:
-        panel["beds"] = panel["beds"].where(panel["beds"].notna(), panel["beds_prov"])
-    panel["beds"] = pd.to_numeric(panel["beds"], errors="coerce")
-else:
-    panel["beds"] = pd.Series([np.nan]*len(panel), dtype="float64")
+# ============================== Unified 'beds' variable (override <15) ========
+# Goal:
+#  • Prefer a plausible bed count >= 15.
+#  • If beds_prov >= 15, use beds_prov.
+#  • Else if num_beds >= 15, use num_beds.
+#  • Else (both < 15 or missing), keep the best available (for now), then drop in analytical.
 
-# Move 'beds' to be immediately after 'beds_prov'
+# Ensure numeric
+for c in ["num_beds", "beds_prov"]:
+    if c in panel.columns:
+        panel[c] = pd.to_numeric(panel[c], errors="coerce")
+
+nb  = panel["num_beds"]   if "num_beds"   in panel.columns else pd.Series(np.nan, index=panel.index)
+bp  = panel["beds_prov"]  if "beds_prov"  in panel.columns else pd.Series(np.nan, index=panel.index)
+
+# Choose >=15 if available; prefer provider value when it’s valid (often more reliable)
+use_bp = bp.where(bp >= 15)
+use_nb = nb.where(nb >= 15)
+
+# Start with beds_prov (>=15), else num_beds (>=15)
+beds_clean = use_bp.fillna(use_nb)
+
+# If neither candidate is >=15, fall back to whichever is non-missing (may be <15). We'll drop later in analytical.
+fallback = nb.where(nb.notna(), bp)  # prefer num_beds if present, else beds_prov
+beds_clean = beds_clean.where(beds_clean.notna(), fallback)
+
+panel["beds"] = pd.to_numeric(beds_clean, errors="coerce")
+
+# Move 'beds' to be immediately after 'beds_prov' for readability
 if "beds" in panel.columns:
     cols = list(panel.columns)
     if "beds_prov" in cols:
@@ -421,6 +439,27 @@ if hppd_cols:
     before = len(analytical)
     analytical = analytical.dropna(subset=hppd_cols)
     print(f"[filter] drop rows with NaN in any HPPD: {before:,} -> {len(analytical):,}")
+
+# ---- NEW: Drop zero-HPPD and implausibly high HPPD cases ----
+#   • total_hppd == 0 or total_hppd >= 24
+#   • cna_hppd == 0
+#   • (rn_hppd == 0 AND lpn_hppd == 0)
+if set(hppd_cols) >= {"rn_hppd","lpn_hppd","cna_hppd","total_hppd"}:
+    before = len(analytical)
+    zmask = (
+        (analytical["total_hppd"] == 0) |
+        (analytical["total_hppd"] >= 24) |
+        (analytical["cna_hppd"] == 0) |
+        ((analytical["rn_hppd"] == 0) & (analytical["lpn_hppd"] == 0))
+    )
+    analytical = analytical.loc[~zmask].copy()
+    print(f"[filter] drop zero/implausible-HPPD cases: {before:,} -> {len(analytical):,}")
+
+# ---- NEW: Drop implausible bed counts (<15) after our override logic ----
+if "beds" in analytical.columns:
+    before = len(analytical)
+    analytical = analytical.loc[~(analytical["beds"] < 15)].copy()
+    print(f"[filter] drop beds < 15: {before:,} -> {len(analytical):,}")
 
 # Drop hospital-resident rows
 if "provider_resides_in_hospital" in analytical.columns:

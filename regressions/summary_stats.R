@@ -176,20 +176,4 @@ print(chain_ccn_count)
 
 # If you want to see the two requested continuous vars prominently:
 cat("\n=== HIGHLIGHTS (row-weighted) ===\n")
-print(dplyr::filter(cont_tbl, variable %in% c("gap_from_prev_months", "coverage_ratio")))
-
-
-# LETS INVESTIGATE THESE CRAZY VALUES
-df %>% summarise(
-  n_big_rn   = sum(rn_hppd   > 3,   na.rm=TRUE),
-  n_big_lpn  = sum(lpn_hppd  > 3,   na.rm=TRUE),
-  n_big_cna  = sum(cna_hppd  > 8,   na.rm=TRUE),
-  n_big_tot  = sum(total_hppd> 12,  na.rm=TRUE)
-)
-
-# peek at the worst
-df %>%
-  arrange(desc(total_hppd)) %>%
-  select(cms_certification_number, year_month, total_hppd, rn_hppd, lpn_hppd, cna_hppd,
-         coverage_ratio, occupancy_rate) %>%
-  head(20)
+print(dplyr::filter(cont_tbl, variable %in% c("gap_from_prev_months", "coverage_ratio")))-

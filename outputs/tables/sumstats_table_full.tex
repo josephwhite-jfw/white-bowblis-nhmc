@@ -1,0 +1,62 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{threeparttable}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{makecell}
+\usepackage{graphicx}
+\captionsetup{labelfont=bf, font=small}
+
+\newcolumntype{Y}{>{\centering\arraybackslash}X}
+
+\begin{document}
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{Panel Summary Statistics}
+\label{tab:sumstats}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l r r r r r r r r @{} }
+\textbf{Panel A}\\[2pt]
+\toprule
+\textbf{Variable} & \textbf{N} & \textbf{Mean} & \textbf{SD} & \textbf{P25} & \textbf{Median} & \textbf{P75} & \textbf{Min} & \textbf{Max} \\
+\midrule
+Gap from previous months & 636,347 & 0.027 & 0.410 & 0.000 & 0.000 & 0.000 & 0.000 & 78.000 \\
+Coverage ratio & 636,347 & 1.000 & 0.017 & 1.000 & 1.000 & 1.000 & 0.323 & 1.000 \\
+RN HPPD & 636,347 & 0.426 & 0.313 & 0.218 & 0.364 & 0.560 & 0.000 & 13.936 \\
+LPN HPPD & 636,347 & 0.794 & 0.331 & 0.593 & 0.786 & 0.972 & 0.000 & 12.767 \\
+CNA HPPD & 636,347 & 2.094 & 0.568 & 1.735 & 2.046 & 2.411 & 0.002 & 15.629 \\
+Total HPPD & 636,347 & 3.315 & 0.833 & 2.800 & 3.237 & 3.718 & 0.004 & 23.779 \\
+Beds & 636,347 & 108.434 & 57.964 & 69.000 & 100.000 & 128.000 & 15.000 & 874.000 \\
+Occupancy rate (\%) & 636,347 & 76.4 & 15.6 & 67.0 & 79.6 & 88.8 & 0.12 & 100.0 \\
+\% Medicare & 636,347 & 13.0 & 11.1 & 6.1 & 10.0 & 16.0 & 0.00 & 99.4 \\
+\% Medicaid & 636,347 & 60.6 & 20.2 & 51.5 & 64.8 & 74.5 & 0.01 & 99.9 \\
+\bottomrule
+\end{tabularx}
+
+\vspace{0.6em}
+
+\textbf{Panel B}\\[2pt]
+\begin{tabularx}{\textwidth}{@{} l r r @{} }
+\toprule
+\textbf{Category} & \textbf{Count (CCN)} & \textbf{Share (\%)} \\
+\midrule
+For-profit  & 5,450 & 69.8 \\
+Non-profit  & 1,434 & 18.4 \\
+Government  & 921 & 11.8 \\
+Chain facilities & 4,875 & 62.5 \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Rows $=$ 636,347; Facilities $=$ 7,805; Period $=$ 2017/01–2024/06; Average months per facility $=$ 81.5.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\end{document}
