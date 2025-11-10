@@ -176,4 +176,4 @@ print(chain_ccn_count)
 
 # If you want to see the two requested continuous vars prominently:
 cat("\n=== HIGHLIGHTS (row-weighted) ===\n")
-print(dplyr::filter(cont_tbl, variable %in% c("gap_from_prev_months", "coverage_ratio")))-
+print(dplyr::filter(cont_tbl, variable %in% c("gap_from_prev_months", "coverage_ratio")))
