@@ -199,3 +199,49 @@ Thumbs.db
 .venv/
 .conda/
 .Rproj.user
+
+
+# Core LaTeX/PDFLaTeX auxiliary files
+*.aux
+*.log
+*.lof
+*.lot
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.nav
+*.snm
+*.vrb
+*.dvi
+*.ps
+
+# BibTeX/Biber auxiliary files
+*.bbl
+*.blg
+*.brf
+
+# Indexing/Glossary files
+*.idx
+*.ind
+*.ilg
+*.glo
+*.gls
+*.glg
+*.ist
+
+# Other common auxiliary files
+*.acn
+*.acr
+*.alg
+*.maf
+*.mtc
+*.mtc[0-9]
+*.gz # For gzipped files like .synctex.gz
+
+# Editor/OS specific files
+.DS_Store # macOS specific
+*~ # Backup files created by some editors
+.#* # Emacs lock files
+*.bak # Generic backup files
