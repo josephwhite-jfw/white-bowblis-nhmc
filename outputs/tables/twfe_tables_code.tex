@@ -1,0 +1,185 @@
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{Two-Way Fixed Effects Estimates of \textit{post} on Staffing Outcomes}
+\label{tab:twfe-post-full}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.029$}{$0.005$}{***}  &  \est{$\phantom{-}0.002$}{$0.006$}{}  &  \est{$-0.049$}{$0.009$}{***}  &  \est{$-0.077$}{$0.013$}{***} \\
+Without anticipation  &  \est{$-0.031$}{$0.005$}{***}  &  \est{$\phantom{-}0.001$}{$0.006$}{}  &  \est{$-0.052$}{$0.010$}{***}  &  \est{$-0.082$}{$0.013$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.085$}{$0.016$}{***}  &  \est{$\phantom{-}0.005$}{$0.009$}{}  &  \est{$-0.023$}{$0.005$}{***}  &  \est{$-0.023$}{$0.004$}{***} \\
+Without anticipation  &  \est{$-0.091$}{$0.016$}{***}  &  \est{$\phantom{-}0.004$}{$0.009$}{}  &  \est{$-0.025$}{$0.005$}{***}  &  \est{$-0.025$}{$0.004$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell reports the coefficient on \textit{post} with two-way clustered standard errors (by facility and month) in parentheses. Panel~A reports levels (HPPD); Panel~B reports logs (HPPD). Samples: \textit{With anticipation} includes all treated and control observations ($N_{\mathrm{levels}}=636,347;\ N_{\mathrm{logs}}=636,347$). \textit{Without anticipation} excludes months $t\in\{-3,-2,-1\}$ for treated facilities ($N_{\mathrm{levels}}=632,176;\ N_{\mathrm{logs}}=632,176$).
+All specifications include facility and month fixed effects and covariates: \textit{government}, \textit{non-profit}, \textit{chain}, \textit{beds}, \textit{occupancy rate}, \textit{percent Medicare}, \textit{percent Medicaid}, and state case-mix quartile indicators.
+Statistical significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Pre-pandemic (2017/01--2019/12)}
+\label{tab:twfe-post-pre}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.027$}{$0.006$}{***}  &  \est{$-0.012$}{$0.008$}{}  &  \est{$-0.056$}{$0.013$}{***}  &  \est{$-0.094$}{$0.019$}{***} \\
+Without anticipation  &  \est{$-0.029$}{$0.006$}{***}  &  \est{$-0.014$}{$0.009$}{}  &  \est{$-0.066$}{$0.014$}{***}  &  \est{$-0.109$}{$0.020$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.059$}{$0.022$}{**}  &  \est{$-0.008$}{$0.011$}{}  &  \est{$-0.031$}{$0.007$}{***}  &  \est{$-0.031$}{$0.006$}{***} \\
+Without anticipation  &  \est{$-0.068$}{$0.024$}{***}  &  \est{$-0.009$}{$0.012$}{}  &  \est{$-0.036$}{$0.007$}{***}  &  \est{$-0.036$}{$0.006$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell reports the coefficient on \textit{post} with two-way clustered standard errors (by facility and month) in parentheses. Panel~A reports levels (HPPD); Panel~B reports logs (HPPD). Samples: \textit{With anticipation} includes all treated and control observations ($N_{\mathrm{levels}}=256,030;\ N_{\mathrm{logs}}=256,030$). \textit{Without anticipation} excludes months $t\in\{-3,-2,-1\}$ for treated facilities ($N_{\mathrm{levels}}=254,189;\ N_{\mathrm{logs}}=254,189$).
+All specifications include facility and month fixed effects and covariates: \textit{government}, \textit{non-profit}, \textit{chain}, \textit{beds}, \textit{occupancy rate}, \textit{percent Medicare}, \textit{percent Medicaid}, and state case-mix quartile indicators.
+ Pre-pandemic window defined as 2017/01--2019/12. Statistical significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Pandemic (2020/04--2024/06)}
+\label{tab:twfe-post-pandemic}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.013$}{$0.007$}{*}  &  \est{$\phantom{-}0.007$}{$0.008$}{}  &  \est{$-0.027$}{$0.014$}{*}  &  \est{$-0.033$}{$0.019$}{*} \\
+Without anticipation  &  \est{$-0.016$}{$0.007$}{**}  &  \est{$\phantom{-}0.003$}{$0.008$}{}  &  \est{$-0.033$}{$0.015$}{**}  &  \est{$-0.046$}{$0.020$}{**} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.052$}{$0.020$}{**}  &  \est{$\phantom{-}0.010$}{$0.011$}{}  &  \est{$-0.010$}{$0.008$}{}  &  \est{$-0.010$}{$0.006$}{} \\
+Without anticipation  &  \est{$-0.062$}{$0.021$}{***}  &  \est{$\phantom{-}0.005$}{$0.011$}{}  &  \est{$-0.014$}{$0.009$}{*}  &  \est{$-0.015$}{$0.007$}{**} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell reports the coefficient on \textit{post} with two-way clustered standard errors (by facility and month) in parentheses. Panel~A reports levels (HPPD); Panel~B reports logs (HPPD). Samples: \textit{With anticipation} includes all treated and control observations ($N_{\mathrm{levels}}=362,420;\ N_{\mathrm{logs}}=362,420$). \textit{Without anticipation} excludes months $t\in\{-3,-2,-1\}$ for treated facilities ($N_{\mathrm{levels}}=360,161;\ N_{\mathrm{logs}}=360,161$).
+All specifications include facility and month fixed effects and covariates: \textit{government}, \textit{non-profit}, \textit{chain}, \textit{beds}, \textit{occupancy rate}, \textit{percent Medicare}, \textit{percent Medicaid}, and state case-mix quartile indicators.
+ Pandemic window defined as 2020/04--2024/06. Statistical significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Facilities that were Chain in 2017Q1}
+\label{tab:twfe-post-chain17}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.030$}{$0.006$}{***}  &  \est{$\phantom{-}0.005$}{$0.008$}{}  &  \est{$-0.030$}{$0.011$}{***}  &  \est{$-0.055$}{$0.015$}{***} \\
+Without anticipation  &  \est{$-0.030$}{$0.007$}{***}  &  \est{$\phantom{-}0.005$}{$0.008$}{}  &  \est{$-0.031$}{$0.011$}{***}  &  \est{$-0.057$}{$0.015$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.097$}{$0.020$}{***}  &  \est{$\phantom{-}0.010$}{$0.012$}{}  &  \est{$-0.016$}{$0.006$}{***}  &  \est{$-0.017$}{$0.005$}{***} \\
+Without anticipation  &  \est{$-0.098$}{$0.021$}{***}  &  \est{$\phantom{-}0.008$}{$0.013$}{}  &  \est{$-0.017$}{$0.006$}{***}  &  \est{$-0.018$}{$0.005$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell reports the coefficient on \textit{post} with two-way clustered standard errors (by facility and month) in parentheses. Panel~A reports levels (HPPD); Panel~B reports logs (HPPD). Samples: \textit{With anticipation} includes all treated and control observations ($N_{\mathrm{levels}}=324,065;\ N_{\mathrm{logs}}=324,065$). \textit{Without anticipation} excludes months $t\in\{-3,-2,-1\}$ for treated facilities ($N_{\mathrm{levels}}=321,505;\ N_{\mathrm{logs}}=321,505$).
+All specifications include facility and month fixed effects and covariates: \textit{government}, \textit{non-profit}, \textit{chain}, \textit{beds}, \textit{occupancy rate}, \textit{percent Medicare}, \textit{percent Medicaid}, and state case-mix quartile indicators.
+ Baseline chain defined by chain==1 in any month of 2017Q1. Statistical significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Facilities that were Non-chain in 2017Q1}
+\label{tab:twfe-post-nonchain17}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.032$}{$0.009$}{***}  &  \est{$\phantom{-}0.003$}{$0.011$}{}  &  \est{$-0.073$}{$0.019$}{***}  &  \est{$-0.102$}{$0.026$}{***} \\
+Without anticipation  &  \est{$-0.035$}{$0.009$}{***}  &  \est{$\phantom{-}0.003$}{$0.011$}{}  &  \est{$-0.078$}{$0.020$}{***}  &  \est{$-0.110$}{$0.027$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.068$}{$0.029$}{**}  &  \est{$\phantom{-}0.013$}{$0.017$}{}  &  \est{$-0.032$}{$0.011$}{***}  &  \est{$-0.027$}{$0.008$}{***} \\
+Without anticipation  &  \est{$-0.084$}{$0.030$}{***}  &  \est{$\phantom{-}0.012$}{$0.018$}{}  &  \est{$-0.034$}{$0.011$}{***}  &  \est{$-0.030$}{$0.008$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell reports the coefficient on \textit{post} with two-way clustered standard errors (by facility and month) in parentheses. Panel~A reports levels (HPPD); Panel~B reports logs (HPPD). Samples: \textit{With anticipation} includes all treated and control observations ($N_{\mathrm{levels}}=244,800;\ N_{\mathrm{logs}}=244,800$). \textit{Without anticipation} excludes months $t\in\{-3,-2,-1\}$ for treated facilities ($N_{\mathrm{levels}}=243,623;\ N_{\mathrm{logs}}=243,623$).
+All specifications include facility and month fixed effects and covariates: \textit{government}, \textit{non-profit}, \textit{chain}, \textit{beds}, \textit{occupancy rate}, \textit{percent Medicare}, \textit{percent Medicaid}, and state case-mix quartile indicators.
+ Baseline non-chain defined by chain==0 in all months of 2017Q1. Statistical significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+

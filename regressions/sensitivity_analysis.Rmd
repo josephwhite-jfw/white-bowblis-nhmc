@@ -1,10 +1,10 @@
 ---
-title: "TWFE Sensitivity — Raw Summaries (Selectable Outcomes)"
+title: "TWFE Sensitivity Analysis"
 author: "Joe White"
 date: "`r format(Sys.Date(), '%B %d, %Y')`"
 output:
   pdf_document:
-    latex_engine: xelatex
+    latex_engine: pdflatex
     toc: false
     number_sections: false
     keep_tex: true
@@ -94,25 +94,26 @@ baseline_window <- df %>%
 
 df <- df %>% left_join(baseline_window, by = "cms_certification_number")
 
-make_pre_pandemic <- function(d) d %>% filter(ym_date >= as.Date("2017-01-01"), ym_date <= as.Date("2019-12-31"))
-make_pandemic     <- function(d) d %>% filter(ym_date >= as.Date("2020-04-01"), ym_date <= as.Date("2024-06-30"))
+#make_pre_pandemic <- function(d) d %>% filter(ym_date >= as.Date("2017-01-01"), ym_date <= as.Date("2019-12-31"))
+#make_pandemic     <- function(d) d %>% filter(ym_date >= as.Date("2020-04-01"), ym_date <= as.Date("2024-06-30"))
 make_for_profit   <- function(d) d %>% filter(government == 0, non_profit == 0)
-make_chain17      <- function(d) d %>% filter(!is.na(baseline_chain_2017Q1), baseline_chain_2017Q1 == 1)
-make_nonchain17   <- function(d) d %>% filter(!is.na(baseline_chain_2017Q1), baseline_chain_2017Q1 == 0)
+make_non_profit   <- function(d) d %>%filter(government == 0, non_profit == 1)
+#make_chain17      <- function(d) d %>% filter(!is.na(baseline_chain_2017Q1), baseline_chain_2017Q1 == 1)
+#make_nonchain17   <- function(d) d %>% filter(!is.na(baseline_chain_2017Q1), baseline_chain_2017Q1 == 0)
 
 scenarios <- list(
-  "pre_pandemic_2017_2019"   = make_pre_pandemic,
-  "pandemic_2020q2_2024q2"   = make_pandemic,
+  #"pre_pandemic_2017_2019"   = make_pre_pandemic,
+  #"pandemic_2020q2_2024q2"   = make_pandemic,
   "for_profit_only"          = make_for_profit,
-  "baseline_chain_2017q1"    = make_chain17,
-  "baseline_nonchain_2017q1" = make_nonchain17
+  "non_profit_only"          = make_non_profit # make sure to add , back
+  #"baseline_chain_2017q1"    = make_chain17,
+  #"baseline_nonchain_2017q1" = make_nonchain17
 )
 
 # ------------------------------ Samples ------------------------------
 sample_slicers <- list(
   "with_anticipation"        = function(d) d,
-  "without_anticipation_I"   = function(d) d %>% filter(anticipation1 == 0),
-  "without_anticipation_II"  = function(d) d %>% filter(anticipation2 == 0)
+  "without_anticipation"  = function(d) d %>% filter(anticipation2 == 0)
 )
 
 # ------------------------------ Run ----------------------------------
