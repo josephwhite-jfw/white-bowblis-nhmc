@@ -1,0 +1,167 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{threeparttable}
+\usepackage{array}
+\usepackage{caption}
+\usepackage{makecell}
+\usepackage{graphicx}
+\captionsetup{labelfont=bf, font=small}
+\newcolumntype{Y}{>{\centering\arraybackslash}X}
+\newcommand{\sym}[1]{\rlap{$^{#1}$}}
+\newcommand{\est}[3]{\makecell[c]{#1\sym{#3}\\ \footnotesize(#2)}}
+\begin{document}
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Drop rows with gap\_from\_prev\_months $>$ 6}
+\label{tab:twfe-gap-6}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.029$}{$0.005$}{***}  &  \est{$\phantom{-}0.001$}{$0.006$}{}  &  \est{$-0.049$}{$0.009$}{***}  &  \est{$-0.077$}{$0.013$}{***} \\
+Without anticipation  &  \est{$-0.030$}{$0.005$}{***}  &  \est{$\phantom{-}0.001$}{$0.006$}{}  &  \est{$-0.052$}{$0.010$}{***}  &  \est{$-0.082$}{$0.013$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.085$}{$0.016$}{***}  &  \est{$\phantom{-}0.005$}{$0.009$}{}  &  \est{$-0.023$}{$0.005$}{***}  &  \est{$-0.023$}{$0.004$}{***} \\
+Without anticipation  &  \est{$-0.091$}{$0.016$}{***}  &  \est{$\phantom{-}0.004$}{$0.009$}{}  &  \est{$-0.025$}{$0.005$}{***}  &  \est{$-0.025$}{$0.004$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell is the \textit{post} coefficient with two-way clustered SEs (facility, month). Panel~A: levels (HPPD); Panel~B: logs. With-anticipation uses all observations ($N_{\mathrm{levels}}=636,140; N_{\mathrm{logs}}=636,140$). Without-anticipation drops treated months $t\in\{-3,-2,-1\}$ ($N_{\mathrm{levels}}=631,975; N_{\mathrm{logs}}=631,975$).
+All specs: facility + month FE and controls: government, non-profit, chain, beds, occupancy rate, %Medicare, %Medicaid, state case-mix quartiles.
+Significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+Construction keeps rows with missing gap; only rows with gap\_from\_prev\_months strictly greater than 6 are removed.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Drop rows with gap\_from\_prev\_months $>$ 3}
+\label{tab:twfe-gap-3}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.029$}{$0.005$}{***}  &  \est{$\phantom{-}0.001$}{$0.006$}{}  &  \est{$-0.049$}{$0.009$}{***}  &  \est{$-0.077$}{$0.013$}{***} \\
+Without anticipation  &  \est{$-0.031$}{$0.005$}{***}  &  \est{$\phantom{-}0.001$}{$0.006$}{}  &  \est{$-0.052$}{$0.010$}{***}  &  \est{$-0.082$}{$0.013$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.085$}{$0.016$}{***}  &  \est{$\phantom{-}0.005$}{$0.009$}{}  &  \est{$-0.024$}{$0.005$}{***}  &  \est{$-0.023$}{$0.004$}{***} \\
+Without anticipation  &  \est{$-0.091$}{$0.016$}{***}  &  \est{$\phantom{-}0.004$}{$0.009$}{}  &  \est{$-0.025$}{$0.005$}{***}  &  \est{$-0.025$}{$0.004$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell is the \textit{post} coefficient with two-way clustered SEs (facility, month). Panel~A: levels (HPPD); Panel~B: logs. With-anticipation uses all observations ($N_{\mathrm{levels}}=635,826; N_{\mathrm{logs}}=635,826$). Without-anticipation drops treated months $t\in\{-3,-2,-1\}$ ($N_{\mathrm{levels}}=631,662; N_{\mathrm{logs}}=631,662$).
+All specs: facility + month FE and controls: government, non-profit, chain, beds, occupancy rate, %Medicare, %Medicaid, state case-mix quartiles.
+Significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+Construction keeps rows with missing gap; only rows with gap\_from\_prev\_months strictly greater than 3 are removed.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Drop rows with gap\_from\_prev\_months $>$ 1}
+\label{tab:twfe-gap-1}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.030$}{$0.005$}{***}  &  \est{$\phantom{-}0.002$}{$0.006$}{}  &  \est{$-0.049$}{$0.009$}{***}  &  \est{$-0.078$}{$0.013$}{***} \\
+Without anticipation  &  \est{$-0.031$}{$0.005$}{***}  &  \est{$\phantom{-}0.001$}{$0.006$}{}  &  \est{$-0.052$}{$0.010$}{***}  &  \est{$-0.082$}{$0.013$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.085$}{$0.016$}{***}  &  \est{$\phantom{-}0.005$}{$0.009$}{}  &  \est{$-0.024$}{$0.005$}{***}  &  \est{$-0.023$}{$0.004$}{***} \\
+Without anticipation  &  \est{$-0.091$}{$0.016$}{***}  &  \est{$\phantom{-}0.004$}{$0.009$}{}  &  \est{$-0.025$}{$0.005$}{***}  &  \est{$-0.025$}{$0.004$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell is the \textit{post} coefficient with two-way clustered SEs (facility, month). Panel~A: levels (HPPD); Panel~B: logs. With-anticipation uses all observations ($N_{\mathrm{levels}}=631,699; N_{\mathrm{logs}}=631,699$). Without-anticipation drops treated months $t\in\{-3,-2,-1\}$ ($N_{\mathrm{levels}}=627,567; N_{\mathrm{logs}}=627,567$).
+All specs: facility + month FE and controls: government, non-profit, chain, beds, occupancy rate, %Medicare, %Medicaid, state case-mix quartiles.
+Significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+Construction keeps rows with missing gap; only rows with gap\_from\_prev\_months strictly greater than 1 are removed.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\begingroup
+\begin{table}[!ht]
+\centering
+\begin{threeparttable}
+\caption{TWFE Estimates of \textit{post}: Drop rows with gap\_from\_prev\_months $>$ 0}
+\label{tab:twfe-gap-0}
+\small
+\setlength{\tabcolsep}{6pt}
+
+\begin{tabularx}{\textwidth}{@{} l YYYY @{} }
+\toprule
+ & \multicolumn{4}{c}{\textbf{Outcomes}} \\
+\cmidrule(lr){2-5}
+ & \textbf{RN} & \textbf{LPN} & \textbf{CNA} & \textbf{Total} \\
+\midrule
+\multicolumn{5}{@{}l}{\textbf{Panel A}} \\[2pt]
+With anticipation  &  \est{$-0.030$}{$0.005$}{***}  &  \est{$\phantom{-}0.002$}{$0.006$}{}  &  \est{$-0.049$}{$0.009$}{***}  &  \est{$-0.078$}{$0.013$}{***} \\
+Without anticipation  &  \est{$-0.031$}{$0.005$}{***}  &  \est{$\phantom{-}0.001$}{$0.006$}{}  &  \est{$-0.052$}{$0.010$}{***}  &  \est{$-0.082$}{$0.013$}{***} \\
+
+\addlinespace[3pt]
+\multicolumn{5}{@{}l}{\textbf{Panel B}} \\[2pt]
+With anticipation  &  \est{$-0.085$}{$0.016$}{***}  &  \est{$\phantom{-}0.005$}{$0.009$}{}  &  \est{$-0.024$}{$0.005$}{***}  &  \est{$-0.023$}{$0.004$}{***} \\
+Without anticipation  &  \est{$-0.091$}{$0.016$}{***}  &  \est{$\phantom{-}0.004$}{$0.009$}{}  &  \est{$-0.025$}{$0.005$}{***}  &  \est{$-0.025$}{$0.004$}{***} \\
+\bottomrule
+\end{tabularx}
+
+\begin{tablenotes}[flushleft]
+\footnotesize
+\item \textit{Notes:} Each cell is the \textit{post} coefficient with two-way clustered SEs (facility, month). Panel~A: levels (HPPD); Panel~B: logs. With-anticipation uses all observations ($N_{\mathrm{levels}}=631,699; N_{\mathrm{logs}}=631,699$). Without-anticipation drops treated months $t\in\{-3,-2,-1\}$ ($N_{\mathrm{levels}}=627,567; N_{\mathrm{logs}}=627,567$).
+All specs: facility + month FE and controls: government, non-profit, chain, beds, occupancy rate, %Medicare, %Medicaid, state case-mix quartiles.
+Significance: $^{***}p<0.01$, $^{**}p<0.05$, $^{*}p<0.10$.
+Construction keeps rows with missing gap; only rows with gap\_from\_prev\_months strictly greater than 0 are removed.
+\end{tablenotes}
+
+\end{threeparttable}
+\end{table}
+\endgroup
+
+\end{document}

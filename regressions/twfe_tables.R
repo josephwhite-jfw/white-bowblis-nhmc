@@ -1,4 +1,3 @@
-# TWFE post tables ??? ONE .tex file (adds baseline chain vs non-chain tables)
 suppressPackageStartupMessages({
   library(fixest)
   library(dplyr)
