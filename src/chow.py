@@ -1,12 +1,14 @@
 #!/usr/bin/env python
 # coding: utf-8
 # -----------------------------------------------------------------------------
-# chow.py — Minimal CHOW exports, with explicit universes
+# chow.py — Minimal CHOW exports, with explicit universes + facility signatures
 #
-# Outputs:
-#   1) data/interim/chow_nh_compare.csv  (universe = CCNs in ownership.csv)
-#   2) data/interim/chow_mcr.csv         (universe = CCNs in MCR files)
-#   3) data/interim/chow.csv             (inner join of the two universes)
+# Outputs (unchanged + new):
+#   1) data/interim/chow_nh_compare.csv              (universe = CCNs in ownership.csv)
+#   2) data/interim/chow_mcr.csv                     (universe = CCNs in MCR files)
+#   3) data/interim/chow.csv                         (inner join of the two universes)
+#   4) data/interim/facility_signatures_long.csv     (NEW: long format owner groups)
+#   5) data/interim/facility_signatures_wide_preview.csv (NEW: wide QC preview)
 #
 # Ownership CHOW criteria: UNCHANGED from your logic
 #   - turnover >= 50% (percent-overlap when available; else names-based fallback)
@@ -35,10 +37,14 @@ OWNERSHIP_FP = INTERIM_DIR / "ownership.csv"  # produced by your ownership pipel
 MCR_DIR      = RAW_DIR / "medicare-cost-reports"
 MCR_PATTERNS = ["mcr_flatfile_20??.csv", "mcr_flatfile_20??.sas7bdat", "mcr_flatfile_20??.xpt", "mcr_flatfile_20??.XPT"]
 
-# Outputs
+# Outputs (existing)
 OWN_OUT   = INTERIM_DIR / "chow_nh_compare.csv"
 MCR_OUT   = INTERIM_DIR / "chow_mcr.csv"
 MERGE_OUT = INTERIM_DIR / "chow.csv"
+
+# NEW facility signatures outputs
+SIG_LONG_OUT = INTERIM_DIR / "facility_signatures_long.csv"
+SIG_WIDE_OUT = INTERIM_DIR / "facility_signatures_wide_preview.csv"
 
 # Window & thresholds (match your existing logic)
 CUTOFF_DATE = pd.Timestamp("2017-01-01")
@@ -397,6 +403,152 @@ def build_chow_from_ownership() -> tuple[pd.DataFrame, pd.DataFrame]:
     out = out.sort_values("cms_certification_number").reset_index(drop=True)
     return out, own_ccns
 
+# ============================== (NEW) Facility signatures =====================
+def build_facility_signatures() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Pure add-on for manual review: constructs long owner-group regimes + a wide preview.
+    Does NOT change CHOW logic or outputs; it only reads OWNERSHIP_FP and writes SIG_LONG_OUT/SIG_WIDE_OUT.
+    """
+    if not OWNERSHIP_FP.exists():
+        raise FileNotFoundError(f"{OWNERSHIP_FP} not found (run ownership pipeline first).")
+
+    df = pd.read_csv(OWNERSHIP_FP, low_memory=False)
+    need = {"cms_certification_number","role","owner_name","ownership_percentage","association_date"}
+    miss = need - set(df.columns)
+    if miss:
+        raise ValueError(f"ownership.csv missing {miss}")
+
+    df["cms_certification_number"] = normalize_ccn_any(df["cms_certification_number"])
+    df["association_date"] = pd.to_datetime(df["association_date"], errors="coerce")
+    df = df.dropna(subset=["association_date"]).copy()
+
+    df["owner_name_norm"] = df["owner_name"].map(clean_owner_name)
+    df["level"] = df["role"].map(level_bucket)
+
+    # ---- Snapshot per (CCN, date) with level priority ----
+    snapshots = []
+    for (ccn, adate), g in df.groupby(["cms_certification_number","association_date"], sort=True):
+        chosen = None
+        for lvl in LEVEL_PRIORITY:
+            gl = g[g["level"] == lvl]
+            if len(gl):
+                chosen = (lvl, gl); break
+        if chosen is None:
+            continue
+        lvl, gl = chosen
+        vec = normalize_weights_allow_missing(gl[["owner_name_norm","ownership_percentage"]].copy())
+        if vec.empty:
+            owners = gl["owner_name_norm"].dropna().unique().tolist()
+            if not owners:
+                continue
+            equal = 100.0 / len(owners)
+            vec = pd.DataFrame({"owner_name_norm": owners, "ownership_percentage": [equal]*len(owners)})
+        weights = dict(zip(vec["owner_name_norm"], vec["ownership_percentage"].astype(float)))
+        snapshots.append({
+            "cms_certification_number": ccn,
+            "association_date": adate,
+            "source_level": lvl,
+            "weights": weights
+        })
+
+    snaps_df = pd.DataFrame(snapshots).sort_values(["cms_certification_number","association_date"]).reset_index(drop=True)
+    if snaps_df.empty:
+        # Write empty shells and return
+        empty_long = pd.DataFrame(columns=[
+            "cms_certification_number","group_n","start","end","source_level",
+            "names_list","pcts_list","owner_count","hhi"
+        ])
+        empty_long.to_csv(SIG_LONG_OUT, index=False)
+        pd.DataFrame(columns=["cms_certification_number"]).to_csv(SIG_WIDE_OUT, index=False)
+        print(f"[save] signatures long → {SIG_LONG_OUT}  rows=0")
+        print(f"[save] signatures wide → {SIG_WIDE_OUT}  rows=0")
+        return empty_long, pd.DataFrame(columns=["cms_certification_number"])
+
+    # ---- Group into stable regimes using TURNOVER_THRESH (unchanged rule) ----
+    def hhi_from_map(wm: dict) -> float:
+        return round(sum((p/100.0)**2 for p in wm.values()), 4)
+
+    long_rows = []
+    for ccn, g in snaps_df.groupby("cms_certification_number", sort=True):
+        g = g.sort_values("association_date").reset_index(drop=True)
+        if g.empty:
+            continue
+        group_n = 1
+        group_start = g.loc[0, "association_date"]
+        group_level = g.loc[0, "source_level"]
+        prev_w = g.loc[0, "weights"]
+
+        long_rows.append({
+            "cms_certification_number": ccn,
+            "group_n": group_n,
+            "start": group_start,
+            "end": pd.NaT,
+            "source_level": group_level,
+            "names_list": json.dumps(list(prev_w.keys()), separators=(",", ":")),
+            "pcts_list": json.dumps(list(prev_w.values()), separators=(",", ":")),
+            "owner_count": len(prev_w),
+            "hhi": hhi_from_map(prev_w),
+        })
+
+        for i in range(1, len(g)):
+            curr_w = g.loc[i, "weights"]
+            ov = pct_overlap(prev_w, curr_w)  # 0..1
+            turnover = 1.0 - ov
+            if turnover >= TURNOVER_THRESH:
+                long_rows[-1]["end"] = g.loc[i-1, "association_date"]
+                group_n += 1
+                group_start = g.loc[i, "association_date"]
+                group_level = g.loc[i, "source_level"]
+                long_rows.append({
+                    "cms_certification_number": ccn,
+                    "group_n": group_n,
+                    "start": group_start,
+                    "end": pd.NaT,
+                    "source_level": group_level,
+                    "names_list": json.dumps(list(curr_w.keys()), separators=(",", ":")),
+                    "pcts_list": json.dumps(list(curr_w.values()), separators=(",", ":")),
+                    "owner_count": len(curr_w),
+                    "hhi": hhi_from_map(curr_w),
+                })
+                prev_w = curr_w
+            else:
+                prev_w = curr_w
+        long_rows[-1]["end"] = g.loc[len(g)-1, "association_date"]
+
+    long_df = pd.DataFrame(long_rows).sort_values(["cms_certification_number","group_n"]).reset_index(drop=True)
+
+    # ---- Wide QC preview (first 8 groups per CCN) ----
+    def as_label(names_json, pcts_json, k=12):
+        names = json.loads(names_json)
+        pcts  = json.loads(pcts_json)
+        pairs = [f"{n} ({int(round(p,0))}%)" for n, p in zip(names, pcts)]
+        return "; ".join(pairs[:k])
+
+    if not long_df.empty:
+        wide_blocks = []
+        for ccn, g in long_df.groupby("cms_certification_number"):
+            g = g.sort_values("group_n")
+            row = {"cms_certification_number": ccn}
+            for _, r in g.head(8).iterrows():
+                n = int(r["group_n"])
+                row[f"group{n}_start"] = pd.to_datetime(r["start"]).date()
+                row[f"group{n}_end"]   = pd.to_datetime(r["end"]).date()
+                row[f"group{n}_level"] = r["source_level"]
+                row[f"group{n}_names"] = as_label(r["names_list"], r["pcts_list"])
+                row[f"group{n}_pcts"]  = ",".join(map(lambda x: str(int(round(x,0))), json.loads(r["pcts_list"])))
+            wide_blocks.append(row)
+        wide_df = pd.DataFrame(wide_blocks).sort_values("cms_certification_number").reset_index(drop=True)
+    else:
+        wide_df = pd.DataFrame(columns=["cms_certification_number"])
+
+    # Save and return
+    long_df.to_csv(SIG_LONG_OUT, index=False)
+    wide_df.to_csv(SIG_WIDE_OUT, index=False)
+    print(f"[save] signatures long → {SIG_LONG_OUT}  rows={len(long_df):,}")
+    print(f"[save] signatures wide → {SIG_WIDE_OUT}  rows={len(wide_df):,}")
+
+    return long_df, wide_df
+
 # ============================== MCR CHOW ======================================
 def build_chow_from_mcr() -> tuple[pd.DataFrame, pd.DataFrame]:
     raw = read_mcr_three_cols()
@@ -426,7 +578,13 @@ def build_chow_from_mcr() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 # ============================== MERGE & SAVE ==================================
 def main():
-    # Build OWN and MCR tables + capture each source universe
+    # --- NEW: build facility signatures for manual review (does not affect CHOW logic) ---
+    try:
+        build_facility_signatures()
+    except Exception as e:
+        print(f"[warn] facility signatures step skipped: {e}")
+
+    # Build OWN and MCR tables + capture each source universe (UNCHANGED)
     own_wide, own_ccns = build_chow_from_ownership()
     mcr_wide, mcr_ccns = build_chow_from_mcr()
 

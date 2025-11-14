@@ -440,20 +440,35 @@ if hppd_cols:
     analytical = analytical.dropna(subset=hppd_cols)
     print(f"[filter] drop rows with NaN in any HPPD: {before:,} -> {len(analytical):,}")
 
-# ---- NEW: Drop zero-HPPD and implausibly high HPPD cases ----
-#   • total_hppd == 0 or total_hppd >= 24
-#   • cna_hppd == 0
-#   • (rn_hppd == 0 AND lpn_hppd == 0)
-if set(hppd_cols) >= {"rn_hppd","lpn_hppd","cna_hppd","total_hppd"}:
+# ---- HPPD cleaning rules ----
+# Drop rows where:
+#   (1) rn_hppd == 0 AND lpn_hppd == 0
+#   (2) total_hppd < 1.5  OR  total_hppd > 12
+#   (3) cna_hppd > 5.25
+
+if {"rn_hppd", "lpn_hppd", "cna_hppd", "total_hppd"}.issubset(analytical.columns):
+    # ensure numeric
+    for c in ["rn_hppd", "lpn_hppd", "cna_hppd", "total_hppd"]:
+        analytical[c] = pd.to_numeric(analytical[c], errors="coerce")
+
     before = len(analytical)
-    zmask = (
-        (analytical["total_hppd"] == 0) |
-        (analytical["total_hppd"] >= 24) |
-        (analytical["cna_hppd"] == 0) |
-        ((analytical["rn_hppd"] == 0) & (analytical["lpn_hppd"] == 0))
-    )
+
+    # construct masks
+    m_joint_zero = (analytical["rn_hppd"] == 0) & (analytical["lpn_hppd"] == 0)
+    m_total_low  = analytical["total_hppd"] < 1.5
+    m_total_high = analytical["total_hppd"] > 12
+    m_cna_high   = analytical["cna_hppd"] > 5.25
+
+    # combine
+    zmask = m_joint_zero | m_total_low | m_total_high | m_cna_high
+
     analytical = analytical.loc[~zmask].copy()
-    print(f"[filter] drop zero/implausible-HPPD cases: {before:,} -> {len(analytical):,}")
+
+    print(
+        f"[filter] drop implausible HPPD: {before:,} -> {len(analytical):,}  "
+        f"(joint_zero={m_joint_zero.sum():,}, total<1.5={m_total_low.sum():,}, "
+        f"total>12={m_total_high.sum():,}, cna>5.25={m_cna_high.sum():,})"
+    )
 
 # ---- NEW: Drop implausible bed counts (<15) after our override logic ----
 if "beds" in analytical.columns:

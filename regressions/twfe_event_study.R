@@ -18,6 +18,10 @@ suppressPackageStartupMessages({
 # ------------------------------ 0) Load ------------------------------
 panel_fp <- "C:/Repositories/white-bowblis-nhmc/data/clean/panel.csv"
 
+# NEW: plot output directory
+out_plots <- "C:/Repositories/white-bowblis-nhmc/outputs/plots"
+dir.create(out_plots, showWarnings = FALSE, recursive = TRUE)
+
 keep_cols <- c(
   "cms_certification_number","year_month","anticipation2",
   "event_time","treatment",
@@ -148,8 +152,10 @@ print_pretrend <- function(title, res) {
 outs_lvl <- c("rn_hppd","lpn_hppd","cna_hppd","total_hppd")
 outs_log <- c("ln_rn","ln_lpn","ln_cna","ln_total")
 
-# ------------------------------ 5) Run models ------------------------------
-fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE) {
+# ------------------------------ 5) Run models + SAVE PLOTS ------------------------------
+fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE,
+                      save_dir = NULL, width_px = 1800, height_px = 1200, dpi = 200) {
+  
   cat("\n\n", strrep("=", 84), "\nBLOCK: ", tag, "\n", strrep("=", 84), "\n", sep = "")
   ref <- pick_ref(data, desired = desired_ref)
   cat("Reference used: t = ", ref, "\n", sep = "")
@@ -170,28 +176,53 @@ fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE) {
     lapply(mods_log, \(m) print(summary(m, keep = "^event_time_capped::")))
   }
   
-  # A couple of pretrend diagnostics on Total
-  cat("\n--- Pretrend diagnostics: TOTAL ---\n")
-  print_pretrend("All pre leads ([-24,-2])",
-                 pretrend_wald(mods_lvl[["total_hppd"]], ref_tau = ref, from = -24, to = -2))
-  print_pretrend("Window [-12,-2]",
-                 pretrend_wald(mods_lvl[["total_hppd"]], ref_tau = ref, from = -12, to = -2))
-  print_pretrend("Nearest-pre",
-                 nearest_pre_test(mods_lvl[["total_hppd"]], ref_tau = ref))
+  # Helper: save one iplot to file
+  save_iplot <- function(model, fname, ylab_txt, main_txt) {
+    if (!is.null(save_dir)) {
+      dir.create(save_dir, showWarnings = FALSE, recursive = TRUE)
+      png(filename = file.path(save_dir, fname),
+          width = width_px, height = height_px, res = dpi)
+      on.exit(dev.off(), add = TRUE)
+      iplot(model, ref = ref, xlim = c(-24, 24),
+            xlab = "Months relative to treatment", ylab = ylab_txt,
+            main = main_txt)
+    }
+  }
   
-  # Plots (you can comment out any you don't need)
+  # Make a filename-safe tag
+  tag_safe <- gsub("[^A-Za-z0-9]+", "_", tolower(tag))
+  
+  # RN
   iplot(mods_lvl[["rn_hppd"]],    ref = ref, xlim = c(-24,24),
         xlab = "Months relative to treatment", ylab = "RN HPPD",
         main = paste0("TWFE ES: RN — ", tag))
+  save_iplot(mods_lvl[["rn_hppd"]],
+             sprintf("twfe_es_rn_%s.png", tag_safe),
+             "RN HPPD", paste0("TWFE ES: RN — ", tag))
+  
+  # LPN
   iplot(mods_lvl[["lpn_hppd"]],   ref = ref, xlim = c(-24,24),
         xlab = "Months relative to treatment", ylab = "LPN HPPD",
         main = paste0("TWFE ES: LPN — ", tag))
+  save_iplot(mods_lvl[["lpn_hppd"]],
+             sprintf("twfe_es_lpn_%s.png", tag_safe),
+             "LPN HPPD", paste0("TWFE ES: LPN — ", tag))
+  
+  # CNA
   iplot(mods_lvl[["cna_hppd"]],   ref = ref, xlim = c(-24,24),
         xlab = "Months relative to treatment", ylab = "CNA HPPD",
         main = paste0("TWFE ES: CNA — ", tag))
+  save_iplot(mods_lvl[["cna_hppd"]],
+             sprintf("twfe_es_cna_%s.png", tag_safe),
+             "CNA HPPD", paste0("TWFE ES: CNA — ", tag))
+  
+  # TOTAL
   iplot(mods_lvl[["total_hppd"]], ref = ref, xlim = c(-24,24),
         xlab = "Months relative to treatment", ylab = "Total HPPD",
         main = paste0("TWFE ES: Total — ", tag))
+  save_iplot(mods_lvl[["total_hppd"]],
+             sprintf("twfe_es_total_%s.png", tag_safe),
+             "Total HPPD", paste0("TWFE ES: Total — ", tag))
   
   invisible(list(levels = mods_lvl, logs = mods_log, ref = ref))
 }
@@ -214,14 +245,20 @@ S_pre_noant  <- S_pre_full %>% filter(anticipation2 == 0)
 S_pan_full   <- df[is_pandemic, ]
 S_pan_noant  <- S_pan_full %>% filter(anticipation2 == 0)
 
-# ------------------------------ 7) Run all blocks ------------------------------
-mods_full     <- fit_block("WITH anticipation — full sample",              S_full,    desired_ref = -1L)
-mods_noant    <- fit_block("WITHOUT anticipation (drop -3..-1)",           S_noant,   desired_ref = -4L)
+# ------------------------------ 7) Run all blocks (and save plots) ------------------------------
+mods_full     <- fit_block("WITH anticipation — full sample",
+                           S_full,    desired_ref = -1L, save_dir = out_plots)
+mods_noant    <- fit_block("WITHOUT anticipation (drop -3..-1)",
+                           S_noant,   desired_ref = -4L, save_dir = out_plots)
 
-mods_pre_full <- fit_block("Pre-pandemic (2017–2019) — WITH anticipation", S_pre_full,  desired_ref = -1L)
-mods_pre_no   <- fit_block("Pre-pandemic (2017–2019) — WITHOUT anticipation", S_pre_noant, desired_ref = -4L)
+mods_pre_full <- fit_block("Pre-pandemic (2017–2019) — WITH anticipation",
+                           S_pre_full,  desired_ref = -1L, save_dir = out_plots)
+mods_pre_no   <- fit_block("Pre-pandemic (2017–2019) — WITHOUT anticipation",
+                           S_pre_noant, desired_ref = -4L, save_dir = out_plots)
 
-mods_pan_full <- fit_block("Pandemic (2020Q2–2024Q2) — WITH anticipation", S_pan_full,  desired_ref = -1L)
-mods_pan_no   <- fit_block("Pandemic (2020Q2–2024Q2) — WITHOUT anticipation", S_pan_noant, desired_ref = -4L)
+mods_pan_full <- fit_block("Pandemic (2020Q2–2024Q2) — WITH anticipation",
+                           S_pan_full,  desired_ref = -1L, save_dir = out_plots)
+mods_pan_no   <- fit_block("Pandemic (2020Q2–2024Q2) — WITHOUT anticipation",
+                           S_pan_noant, desired_ref = -4L, save_dir = out_plots)
 
 cat("\nDone.\n")
