@@ -5,6 +5,7 @@
 #   (B) WITHOUT anticipation (drop t in {-3,-2,-1})  ==> use anticipation2 == 0
 #   (C) Pre-pandemic (2017-01..2019-12) vs Pandemic (2020-04..2024-06),
 #       each WITH and WITHOUT anticipation
+#   (D) Robustness: change event-time window, change anticipation window
 #
 # Outcomes: RN, LPN, CNA, Total — in levels and logs (logs only if > 0)
 
@@ -81,9 +82,10 @@ pick_ref <- function(dat, desired = NULL) {
   return(ev[1])
 }
 
-run_es_twfe <- function(lhs, data, ref_val) {
+run_es_twfe <- function(lhs, data, ref_val, window = c(-24L, 24L)) {
   fml <- as.formula(paste0(
-    lhs, " ~ i(event_time_capped, ever_treated, ref = ", ref_val, ", keep = -24:24) + ",
+    lhs, " ~ i(event_time_capped, ever_treated, ref = ", ref_val,
+    ", keep = ", window[1], ":", window[2], ") + ",
     controls_rhs,
     " | cms_certification_number + year_month"
   ))
@@ -154,18 +156,19 @@ outs_log <- c("ln_rn","ln_lpn","ln_cna","ln_total")
 
 # ------------------------------ 5) Run models + SAVE PLOTS ------------------------------
 fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE,
-                      save_dir = NULL, width_px = 1800, height_px = 1200, dpi = 200) {
+                      save_dir = NULL, width_px = 1800, height_px = 1200, dpi = 200,
+                      event_window = c(-24L, 24L)) {
   
   cat("\n\n", strrep("=", 84), "\nBLOCK: ", tag, "\n", strrep("=", 84), "\n", sep = "")
   ref <- pick_ref(data, desired = desired_ref)
   cat("Reference used: t = ", ref, "\n", sep = "")
   
   # LEVELS
-  mods_lvl <- lapply(outs_lvl, \(y) run_es_twfe(y, data, ref))
+  mods_lvl <- lapply(outs_lvl, \(y) run_es_twfe(y, data, ref_val = ref, window = event_window))
   names(mods_lvl) <- outs_lvl
   
   # LOGS
-  mods_log <- lapply(outs_log, \(y) run_es_twfe(y, data, ref))
+  mods_log <- lapply(outs_log, \(y) run_es_twfe(y, data, ref_val = ref, window = event_window))
   names(mods_log) <- outs_log
   
   # Print compact summaries for event-time coefficients only
@@ -183,7 +186,7 @@ fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE,
       png(filename = file.path(save_dir, fname),
           width = width_px, height = height_px, res = dpi)
       on.exit(dev.off(), add = TRUE)
-      iplot(model, ref = ref, xlim = c(-24, 24),
+      iplot(model, ref = ref, xlim = event_window,
             xlab = "Months relative to treatment", ylab = ylab_txt,
             main = main_txt)
     }
@@ -193,7 +196,7 @@ fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE,
   tag_safe <- gsub("[^A-Za-z0-9]+", "_", tolower(tag))
   
   # RN
-  iplot(mods_lvl[["rn_hppd"]],    ref = ref, xlim = c(-24,24),
+  iplot(mods_lvl[["rn_hppd"]],    ref = ref, xlim = event_window,
         xlab = "Months relative to treatment", ylab = "RN HPPD",
         main = paste0("TWFE ES: RN — ", tag))
   save_iplot(mods_lvl[["rn_hppd"]],
@@ -201,7 +204,7 @@ fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE,
              "RN HPPD", paste0("TWFE ES: RN — ", tag))
   
   # LPN
-  iplot(mods_lvl[["lpn_hppd"]],   ref = ref, xlim = c(-24,24),
+  iplot(mods_lvl[["lpn_hppd"]],   ref = ref, xlim = event_window,
         xlab = "Months relative to treatment", ylab = "LPN HPPD",
         main = paste0("TWFE ES: LPN — ", tag))
   save_iplot(mods_lvl[["lpn_hppd"]],
@@ -209,7 +212,7 @@ fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE,
              "LPN HPPD", paste0("TWFE ES: LPN — ", tag))
   
   # CNA
-  iplot(mods_lvl[["cna_hppd"]],   ref = ref, xlim = c(-24,24),
+  iplot(mods_lvl[["cna_hppd"]],   ref = ref, xlim = event_window,
         xlab = "Months relative to treatment", ylab = "CNA HPPD",
         main = paste0("TWFE ES: CNA — ", tag))
   save_iplot(mods_lvl[["cna_hppd"]],
@@ -217,7 +220,7 @@ fit_block <- function(tag, data, desired_ref = -1L, print_logs = TRUE,
              "CNA HPPD", paste0("TWFE ES: CNA — ", tag))
   
   # TOTAL
-  iplot(mods_lvl[["total_hppd"]], ref = ref, xlim = c(-24,24),
+  iplot(mods_lvl[["total_hppd"]], ref = ref, xlim = event_window,
         xlab = "Months relative to treatment", ylab = "Total HPPD",
         main = paste0("TWFE ES: Total — ", tag))
   save_iplot(mods_lvl[["total_hppd"]],
@@ -245,7 +248,7 @@ S_pre_noant  <- S_pre_full %>% filter(anticipation2 == 0)
 S_pan_full   <- df[is_pandemic, ]
 S_pan_noant  <- S_pan_full %>% filter(anticipation2 == 0)
 
-# ------------------------------ 7) Run all blocks (and save plots) ------------------------------
+# ------------------------------ 7) Run main blocks (and save plots) ------------------------------
 mods_full     <- fit_block("WITH anticipation — full sample",
                            S_full,    desired_ref = -1L, save_dir = out_plots)
 mods_noant    <- fit_block("WITHOUT anticipation (drop -3..-1)",
@@ -261,4 +264,61 @@ mods_pan_full <- fit_block("Pandemic (2020Q2–2024Q2) — WITH anticipation",
 mods_pan_no   <- fit_block("Pandemic (2020Q2–2024Q2) — WITHOUT anticipation",
                            S_pan_noant, desired_ref = -4L, save_dir = out_plots)
 
+# ------------------------------ 8) TWFE robustness: event-window and anticipation-window ------------------------------
+robust_specs <- list(
+  list(
+    name        = "noant_win_24",
+    tag         = "Robustness: WITHOUT anticipation, window [-24,24]",
+    data        = S_noant,
+    desired_ref = -4L,
+    event_window= c(-24L, 24L)
+  ),
+  list(
+    name        = "noant_win_18",
+    tag         = "Robustness: WITHOUT anticipation, window [-18,18]",
+    data        = S_noant,
+    desired_ref = -4L,
+    event_window= c(-18L, 18L)
+  ),
+  list(
+    name        = "noant_win_12",
+    tag         = "Robustness: WITHOUT anticipation, window [-12,12]",
+    data        = S_noant,
+    desired_ref = -4L,
+    event_window= c(-12L, 12L)
+  ),
+  # Alternative anticipation sets based on event_time:
+  # wider donut: drop t in {-4,-3,-2,-1}
+  list(
+    name        = "drop_m4_to_m1",
+    tag         = "Robustness: drop t in {-4,-3,-2,-1}",
+    data        = df %>% filter(is.na(event_time) | !(event_time %in% -4:-1)),
+    desired_ref = -1L,
+    event_window= c(-24L, 24L)
+  ),
+  # narrower donut: drop only t in {-2,-1}
+  list(
+    name        = "drop_m2_to_m1",
+    tag         = "Robustness: drop t in {-2,-1}",
+    data        = df %>% filter(is.na(event_time) | !(event_time %in% c(-2, -1))),
+    desired_ref = -1L,
+    event_window= c(-24L, 24L)
+  )
+)
+
+robust_results <- list()
+for (sp in robust_specs) {
+  cat("\n\n", strrep("-", 60), "\nROBUSTNESS BLOCK: ", sp$name, "\n",
+      strrep("-", 60), "\n", sep = "")
+  robust_results[[sp$name]] <- fit_block(
+    tag          = sp$tag,
+    data         = sp$data,
+    desired_ref  = sp$desired_ref,
+    print_logs   = FALSE,              # keep console cleaner if you want
+    save_dir     = out_plots,
+    event_window = sp$event_window
+  )
+}
+
+cat("\nAll TWFE robustness blocks completed.\n")
 cat("\nDone.\n")
