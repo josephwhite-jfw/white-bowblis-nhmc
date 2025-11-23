@@ -245,3 +245,7 @@ Thumbs.db
 *~ # Backup files created by some editors
 .#* # Emacs lock files
 *.bak # Generic backup files
+
+.Rhistory
+.RData
+.Rproj.user/
